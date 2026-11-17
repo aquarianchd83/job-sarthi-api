@@ -1,0 +1,78 @@
+using JobSarthi.Api.Domain.Entities;
+using JobSarthi.Api.Domain.Enums;
+using JobSarthi.Api.Filtering;
+using Xunit;
+
+namespace JobSarthi.Api.Tests;
+
+public class RuleFilterTests
+{
+    private static Rule MyRules() => new()
+    {
+        Roles = { "Senior .NET Developer", "Full Stack Developer" },
+        MinExperience = 5, MaxExperience = 12,
+        Locations = { "Bengaluru", "Pune", "Remote" },
+        WorkMode = null,
+        Keywords = { "C#", "Angular" },
+        BlacklistedCompanies = { "BadCorp" },
+    };
+
+    private static Job J(string title, string company = "Acme", string loc = "Pune", WorkMode mode = WorkMode.Onsite, string desc = "Great role.") =>
+        new() { Title = title, Company = company, Location = loc, WorkMode = mode, Description = desc };
+
+    [Fact] public void Blacklisted_company_is_dropped() =>
+        Assert.StartsWith("Blacklisted", RuleFilter.Check(J("Senior .NET Developer", "BadCorp Ltd"), MyRules()));
+
+    [Fact] public void Engineer_counts_as_developer() =>
+        Assert.Null(RuleFilter.Check(J("Senior .NET Engineer"), MyRules()));
+
+    [Fact] public void Unrelated_title_is_dropped() =>
+        Assert.Equal("Title does not match your roles", RuleFilter.Check(J("Senior UX Designer"), MyRules()));
+
+    [Fact] public void Full_stack_with_and_without_hyphen_match()
+    {
+        Assert.Null(RuleFilter.Check(J("Full-Stack Developer"), MyRules()));
+        Assert.Null(RuleFilter.Check(J("Full Stack Developer"), MyRules()));
+    }
+
+    [Fact] public void Location_not_in_list_is_dropped() =>
+        Assert.Equal("Location not in your list", RuleFilter.Check(J("Senior .NET Developer", loc: "Austin, TX"), MyRules()));
+
+    [Fact] public void Remote_job_open_to_anywhere_passes_but_us_only_does_not()
+    {
+        Assert.Null(RuleFilter.Check(J("Senior .NET Developer", loc: "Anywhere in the World", mode: WorkMode.Remote), MyRules()));
+        Assert.NotNull(RuleFilter.Check(J("Senior .NET Developer", loc: "USA Only", mode: WorkMode.Remote), MyRules()));
+    }
+
+    [Fact] public void Work_mode_rule_is_enforced()
+    {
+        var r = MyRules(); r.WorkMode = WorkMode.Remote;
+        Assert.NotNull(RuleFilter.Check(J("Senior .NET Developer"), r));
+    }
+
+    [Fact] public void Too_much_required_experience_is_dropped() =>
+        Assert.StartsWith("Needs 15+", RuleFilter.Check(J("Senior .NET Developer", desc: "You have 15+ years of experience in .NET"), MyRules()));
+
+    [Fact] public void Required_years_reads_both_phrasings()
+    {
+        Assert.Equal(5, RuleFilter.RequiredYears(J("x", desc: "5+ years of professional experience")));
+        Assert.Equal(3, RuleFilter.RequiredYears(J("x", desc: "Experience: at least 3 years in C#")));
+        Assert.Null(RuleFilter.RequiredYears(J("x", desc: "We were founded 10 years ago.")));
+    }
+
+    [Fact] public void Salary_below_minimum_is_dropped()
+    {
+        var r = MyRules(); r.MinSalaryLpa = 25;
+        Assert.StartsWith("Salary", RuleFilter.Check(J("Senior .NET Developer", desc: "Pay 10-15 LPA"), r));
+    }
+
+    [Fact] public void Alert_job_with_only_title_skips_location_and_mode_checks()
+    {
+        var alert = new Job { Title = "Senior .NET Developer", Company = "", Location = "", Description = "", WorkMode = WorkMode.Onsite };
+        var r = MyRules(); r.WorkMode = WorkMode.Remote;
+        Assert.Null(RuleFilter.Check(alert, r));
+    }
+
+    [Fact] public void Empty_rules_let_everything_through() =>
+        Assert.Null(RuleFilter.Check(J("Anything"), new Rule()));
+}

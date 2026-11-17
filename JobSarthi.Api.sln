@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{AFB7AF46-CACA-4321-8236-330E46F3F948}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JobSarthi.Api", "src\JobSarthi.Api\JobSarthi.Api.csproj", "{28B182EE-6514-4066-BAB9-2574E334007A}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{DF1C9C25-8CFC-4AF6-831B-67756AD70672}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JobSarthi.Api.Tests", "tests\JobSarthi.Api.Tests\JobSarthi.Api.Tests.csproj", "{CD868DA1-B682-4D44-A10C-12C39B8EE6C3}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{28B182EE-6514-4066-BAB9-2574E334007A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{28B182EE-6514-4066-BAB9-2574E334007A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{28B182EE-6514-4066-BAB9-2574E334007A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{28B182EE-6514-4066-BAB9-2574E334007A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CD868DA1-B682-4D44-A10C-12C39B8EE6C3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CD868DA1-B682-4D44-A10C-12C39B8EE6C3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CD868DA1-B682-4D44-A10C-12C39B8EE6C3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CD868DA1-B682-4D44-A10C-12C39B8EE6C3}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{28B182EE-6514-4066-BAB9-2574E334007A} = {AFB7AF46-CACA-4321-8236-330E46F3F948}
+		{CD868DA1-B682-4D44-A10C-12C39B8EE6C3} = {DF1C9C25-8CFC-4AF6-831B-67756AD70672}
+	EndGlobalSection
+EndGlobal
