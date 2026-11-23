@@ -16,6 +16,7 @@ public static class JobSourceExtensions
         services.AddTransient<IJobSource, LinkedInAlertSource>();
         services.AddScoped<JobSourceRegistry>();
         services.AddScoped<JobFetchService>();
+        services.AddScoped<CompanyDiscoveryService>();
         services.AddScoped<JobSarthi.Api.Filtering.JobScoringService>();
         return services;
     }

@@ -20,6 +20,7 @@ public class JobSarthiDbContext : DbContext
     public DbSet<DailyRun> DailyRuns => Set<DailyRun>();
     public DbSet<PendingQuestion> PendingQuestions => Set<PendingQuestion>();
     public DbSet<Alert> Alerts => Set<Alert>();
+    public DbSet<CompanySuggestion> CompanySuggestions => Set<CompanySuggestion>();
 
     /// <summary>Every DateTime is UTC. Mark it so the API serializes a trailing "Z" and clients never misread it as local.</summary>
     protected override void ConfigureConventions(ModelConfigurationBuilder cb)
@@ -54,6 +55,15 @@ public class JobSarthiDbContext : DbContext
             e.HasIndex(x => new { x.SourceKey, x.Slug }).IsUnique();
             e.Property(x => x.SourceKey).HasMaxLength(50);
             e.Property(x => x.Slug).HasMaxLength(100);
+        });
+        b.Entity<CompanySuggestion>(e =>
+        {
+            e.HasIndex(x => new { x.SourceKey, x.Slug }).IsUnique();
+            e.Property(x => x.SourceKey).HasMaxLength(50);
+            e.Property(x => x.Slug).HasMaxLength(100);
+            e.Property(x => x.ExampleTitle).HasMaxLength(300);
+            e.Property(x => x.ExampleCompany).HasMaxLength(200);
+            e.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
         });
         b.Entity<Job>(e =>
         {

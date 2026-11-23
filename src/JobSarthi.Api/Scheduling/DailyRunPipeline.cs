@@ -16,7 +16,7 @@ namespace JobSarthi.Api.Scheduling;
 /// The daily routine: fetch from enabled sources, filter and score, then tailor and queue applications for the best
 /// auto-apply jobs. Approval mode stops before submitting. Only one run at a time.
 /// </summary>
-public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobScoringService scoring, JobClassificationService classification, TailoringService tailoring,
+public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobScoringService scoring, JobClassificationService classification, CompanyDiscoveryService discovery, TailoringService tailoring,
     ApplyStarter starter, AlertService alerts, SummaryService summary, ILogger<DailyRunPipeline> log)
 {
     /// <summary>Held for the whole run.</summary>
@@ -56,6 +56,12 @@ public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobS
             if (pages.Checked > 0)
                 notes.Add($"Checked {pages.Checked} apply page(s): {pages.Closed} closed and ignored, {pages.Upgraded} moved to API apply");
             notes.Add(await CategoryNoteAsync(ct));
+
+            // 2c. Greenhouse/Lever/Ashby companies seen in other sources' links: suggest them (or add, if switched on).
+            var autoAdd = (await db.Settings.AsNoTracking().FirstAsync(ct)).AutoAddDiscoveredCompanies;
+            var d = await discovery.DiscoverAsync(autoAdd, ct);
+            if (d.NewSuggestions > 0 || d.AutoAdded > 0)
+                notes.Add(autoAdd ? $"Added {d.AutoAdded} new company board(s) found in job links" : $"{d.NewSuggestions} new company board(s) suggested in Job Sources");
 
             // 3. Tailor and queue applications.
             run.Queued = await QueueApplicationsAsync(notes, ct);

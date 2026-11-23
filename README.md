@@ -30,6 +30,13 @@ Jobs that say "no longer accepting applications" (position filled, expired, clos
 shortlisted, never applied to. The listing text is checked on every scoring pass, the live apply page is checked for the
 shortlist in the daily run (`POST /api/jobs/classify`, `POST /api/jobs/{id}/check-page`), and again by the browser before filling.
 
+## Company discovery
+
+Greenhouse, Lever and Ashby have no "search all companies" API, so they only read the company boards in your list.
+After each daily run (or **Scan jobs now** on Job Sources) the app reads the apply links of jobs from RemoteOK,
+We Work Remotely and email alerts, and suggests every Greenhouse/Lever/Ashby board it finds (`CompanyDiscoveryService`).
+Add them one by one, all at once, or switch on auto-add. A company you remove or mark Not interested is never suggested again.
+
 ## MCP client (Playwright MCP)
 
 The app is an MCP **client**: it starts external MCP servers and uses their tools. It is not an MCP server.

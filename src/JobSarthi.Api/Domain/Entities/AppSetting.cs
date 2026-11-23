@@ -19,4 +19,6 @@ public class AppSetting
     public bool NotifySummary { get; set; } = true;
     /// <summary>Send failure alerts to those channels.</summary>
     public bool NotifyAlerts { get; set; } = true;
+    /// <summary>Add Greenhouse/Lever/Ashby companies found in other sources' apply links straight to the company list (else only suggest).</summary>
+    public bool AutoAddDiscoveredCompanies { get; set; }
 }

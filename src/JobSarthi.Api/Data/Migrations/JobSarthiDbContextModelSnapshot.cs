@@ -66,6 +66,9 @@ namespace JobSarthi.Api.Data.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("nvarchar(20)");
 
+                    b.Property<bool>("AutoAddDiscoveredCompanies")
+                        .HasColumnType("bit");
+
                     b.Property<int>("AutoApplyMinScore")
                         .HasColumnType("int");
 
@@ -147,6 +150,54 @@ namespace JobSarthi.Api.Data.Migrations
                         .IsUnique();
 
                     b.ToTable("CompanySlugs");
+                });
+
+            modelBuilder.Entity("JobSarthi.Api.Domain.Entities.CompanySuggestion", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("ExampleCompany")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)");
+
+                    b.Property<string>("ExampleTitle")
+                        .HasMaxLength(300)
+                        .HasColumnType("nvarchar(300)");
+
+                    b.Property<DateTime>("FirstSeenUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("LastSeenUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<int>("SeenCount")
+                        .HasColumnType("int");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("SourceKey")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourceKey", "Slug")
+                        .IsUnique();
+
+                    b.ToTable("CompanySuggestions");
                 });
 
             modelBuilder.Entity("JobSarthi.Api.Domain.Entities.DailyRun", b =>

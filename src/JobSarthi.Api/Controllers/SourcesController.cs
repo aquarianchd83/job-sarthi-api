@@ -9,6 +9,8 @@ public record SourceDto(string Key, string DisplayName, string Capability, bool 
     DateTime? LastRunUtc, int LastJobCount, string? LastError, List<string> CompanySlugs);
 public record ToggleRequest(bool Enabled);
 public record SlugRequest(string Slug);
+public record SuggestionDto(int Id, string SourceKey, string Slug, int SeenCount, string? ExampleTitle, string? ExampleCompany, DateTime LastSeenUtc);
+public record AutoAddRequest(bool Enabled);
 
 [ApiController]
 [Route("api/[controller]")]
@@ -16,7 +18,66 @@ public class SourcesController : ControllerBase
 {
     private static readonly string[] SlugSources = { "greenhouse", "lever", "ashby" };
     private readonly JobSarthiDbContext _db;
-    public SourcesController(JobSarthiDbContext db) => _db = db;
+    private readonly JobSarthi.Api.Sources.CompanyDiscoveryService _discovery;
+    public SourcesController(JobSarthiDbContext db, JobSarthi.Api.Sources.CompanyDiscoveryService discovery) { _db = db; _discovery = discovery; }
+
+    /// <summary>Greenhouse/Lever/Ashby companies found in other sources' apply links, not yet in your list. Most seen first.</summary>
+    [HttpGet("suggestions")]
+    public async Task<object> Suggestions()
+    {
+        var items = await _db.CompanySuggestions.AsNoTracking().Where(s => s.Status == SuggestionStatus.Pending)
+            .OrderByDescending(s => s.SeenCount).ThenBy(s => s.Slug)
+            .Select(s => new SuggestionDto(s.Id, s.SourceKey, s.Slug, s.SeenCount, s.ExampleTitle, s.ExampleCompany, s.LastSeenUtc))
+            .ToListAsync();
+        var autoAdd = (await _db.Settings.AsNoTracking().FirstAsync()).AutoAddDiscoveredCompanies;
+        return new { autoAdd, items };
+    }
+
+    /// <summary>Scan stored jobs now (the daily run does this too).</summary>
+    [HttpPost("suggestions/scan")]
+    public async Task<object> Scan(CancellationToken ct)
+    {
+        var autoAdd = (await _db.Settings.AsNoTracking().FirstAsync(ct)).AutoAddDiscoveredCompanies;
+        return await _discovery.DiscoverAsync(autoAdd, ct);
+    }
+
+    [HttpPost("suggestions/{id:int}/accept")]
+    public async Task<IActionResult> Accept(int id, CancellationToken ct)
+    {
+        var s = await _db.CompanySuggestions.FirstOrDefaultAsync(x => x.Id == id, ct);
+        if (s is null) return NotFound();
+        await _discovery.AcceptAsync(s, ct);
+        return NoContent();
+    }
+
+    [HttpPost("suggestions/accept-all")]
+    public async Task<object> AcceptAll(CancellationToken ct)
+    {
+        var pending = await _db.CompanySuggestions.Where(x => x.Status == SuggestionStatus.Pending).ToListAsync(ct);
+        foreach (var s in pending) await _discovery.AcceptAsync(s, ct);
+        return new { added = pending.Count };
+    }
+
+    /// <summary>Hide a suggestion for good. It is not suggested again.</summary>
+    [HttpPost("suggestions/{id:int}/dismiss")]
+    public async Task<IActionResult> Dismiss(int id)
+    {
+        var s = await _db.CompanySuggestions.FirstOrDefaultAsync(x => x.Id == id);
+        if (s is null) return NotFound();
+        s.Status = SuggestionStatus.Dismissed;
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
+
+    /// <summary>On: companies found in job links are added to the list automatically during the daily run.</summary>
+    [HttpPut("suggestions/auto-add")]
+    public async Task<IActionResult> SetAutoAdd(AutoAddRequest req)
+    {
+        var s = await _db.Settings.FirstAsync();
+        s.AutoAddDiscoveredCompanies = req.Enabled;
+        await _db.SaveChangesAsync();
+        return NoContent();
+    }
 
     [HttpGet]
     public async Task<IEnumerable<SourceDto>> GetAll()
@@ -56,6 +117,9 @@ public class SourcesController : ControllerBase
         var row = await _db.CompanySlugs.FirstOrDefaultAsync(x => x.SourceKey == key && x.Slug == slug);
         if (row is null) return NotFound();
         _db.CompanySlugs.Remove(row);
+        // Removed by you: never suggested or auto-added again.
+        var sug = await _db.CompanySuggestions.FirstOrDefaultAsync(x => x.SourceKey == key && x.Slug == slug);
+        if (sug is not null) sug.Status = SuggestionStatus.Dismissed;
         await _db.SaveChangesAsync();
         return NoContent();
     }
