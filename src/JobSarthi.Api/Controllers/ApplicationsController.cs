@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using JobSarthi.Api.Applying;
+using JobSarthi.Api.Common;
 using JobSarthi.Api.Data;
 using JobSarthi.Api.Domain.Entities;
 using JobSarthi.Api.Domain.Enums;
@@ -11,7 +12,9 @@ namespace JobSarthi.Api.Controllers;
 public record ApplicationListItem(int Id, int JobId, string Title, string Company, string SourceKey, string Status,
     DateTime UpdatedAtUtc, string Url, string? ApplyCategory);
 public record LogLine(DateTime AtUtc, string Message);
-public record PendingQuestionDto(int Id, string Kind, string Prompt);
+/// <param name="Input">text | textarea | select | radio | multi | yesno.</param>
+/// <param name="Options">The form's own choices for select / radio / multi.</param>
+public record PendingQuestionDto(int Id, string Kind, string Prompt, string Input, List<string> Options);
 public record ApplicationDetail(int Id, int JobId, string Title, string Company, string SourceKey, string Status, string Url,
     DateTime UpdatedAtUtc, DateTime? SubmittedAtUtc, string? CoverLetter, bool HasScreenshot,
     List<LogLine> Log, List<PendingQuestionDto> Pending,
@@ -141,10 +144,33 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
         if (q.Kind != "question") return BadRequest("CAPTCHAs and codes cannot be answered here. Open the job link and apply yourself.");
         if (string.IsNullOrWhiteSpace(req.Answer)) return BadRequest("Type an answer.");
 
-        q.Answer = req.Answer.Trim();
+        // A choice must be one of the form's own options, so the form can be filled exactly.
+        var options = ParseOptions(q.OptionsJson);
+        string answer;
+        if (q.InputType == "multi" && options.Count > 0)
+        {
+            var picked = Question.SplitMulti(req.Answer);
+            var bad = picked.Where(p => !options.Contains(p)).ToList();
+            if (picked.Count == 0) return BadRequest("Pick at least one option.");
+            if (bad.Count > 0) return BadRequest($"Not an option on the form: {string.Join(", ", bad)}");
+            answer = string.Join(Question.MultiSeparator, options.Where(picked.Contains)); // form order
+        }
+        else if (q.InputType is "select" or "radio" && options.Count > 0)
+        {
+            answer = req.Answer.Trim();
+            if (!options.Contains(answer)) return BadRequest($"Not an option on the form: {answer}");
+        }
+        else answer = req.Answer.Trim();
+
+        q.Answer = answer;
         q.Resolved = true;
-        if (req.Save && !await db.SavedAnswers.AnyAsync(a => a.Question == q.Prompt, ct))
-            db.SavedAnswers.Add(new SavedAnswer { Question = q.Prompt, Answer = q.Answer });
+        if (req.Save)
+        {
+            var key = TextUtil.Truncate(q.Prompt, 300);
+            var saved = await db.SavedAnswers.FirstOrDefaultAsync(a => a.Question == key, ct);
+            if (saved is null) db.SavedAnswers.Add(new SavedAnswer { Question = key, Answer = answer });
+            else saved.Answer = answer; // your newest answer wins
+        }
         await db.SaveChangesAsync(ct);
 
         var stillOpen = await db.PendingQuestions.AnyAsync(x => x.ApplicationId == id && !x.Resolved && x.Kind == "question", ct);
@@ -161,6 +187,13 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
     }
 
     // ---- helpers ----
+
+    private static List<string> ParseOptions(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new();
+        try { return System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? new(); }
+        catch (System.Text.Json.JsonException) { return new(); }
+    }
 
     private async Task<ActionResult<ApplicationDetail>> Start(JobApplication app, CancellationToken ct, bool? submit = null, string? note = null)
     {
@@ -193,13 +226,14 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
         var log = await db.ApplicationLogs.AsNoTracking().Where(l => l.ApplicationId == id).OrderBy(l => l.AtUtc).ThenBy(l => l.Id)
             .Select(l => new LogLine(l.AtUtc, l.Message)).ToListAsync();
         var pending = await db.PendingQuestions.AsNoTracking().Where(q => q.ApplicationId == id && !q.Resolved)
-            .Select(q => new PendingQuestionDto(q.Id, q.Kind, q.Prompt)).ToListAsync();
+            .Select(q => new { q.Id, q.Kind, q.Prompt, q.InputType, q.OptionsJson }).ToListAsync();
+        var pendingDtos = pending.Select(q => new PendingQuestionDto(q.Id, q.Kind, q.Prompt, q.InputType, ParseOptions(q.OptionsJson))).ToList();
         var name = await db.Profiles.AsNoTracking().Select(p => p.FullName).FirstOrDefaultAsync();
         var subject = row.j.ApplyCategory == ApplyCategory.Email
             ? $"Application for {row.j.Title}" + (string.IsNullOrWhiteSpace(name) ? "" : $" - {name}")
             : null;
         return new ApplicationDetail(row.a.Id, row.a.JobId, row.j.Title, row.j.Company, row.j.SourceKey, row.a.Status.ToString(), row.j.Url,
-            row.a.UpdatedAtUtc, row.a.SubmittedAtUtc, row.a.CoverLetter, row.a.ScreenshotFile is not null, log, pending,
+            row.a.UpdatedAtUtc, row.a.SubmittedAtUtc, row.a.CoverLetter, row.a.ScreenshotFile is not null, log, pendingDtos,
             row.j.ApplyCategory?.ToString(), row.j.ApplyUrl ?? row.j.Url, row.j.ApplyEmail, subject, row.j.CategoryReason);
     }
 }

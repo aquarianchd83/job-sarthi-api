@@ -26,7 +26,25 @@ public static class FormFieldMapper
         const wrap = el.closest('.field, .application-field, .application-question, [class*=question], .form-group');
         const l = wrap && wrap.querySelector('label, legend, .question-label'); return l ? l.innerText : el.name;
       };
-      const out = [], groups = {}; let n = 0;
+      // Which question a checkbox belongs to: shared name, else a fieldset / role=group, else the nearest
+      // wrapper that holds several checkboxes and no other kind of input. Null = a lone yes/no box.
+      let gid = 0;
+      const checkGroupKey = el => {
+        if (el.name && document.querySelectorAll('input[type=checkbox][name="' + CSS.escape(el.name) + '"]').length > 1) return 'n:' + el.name;
+        let box = el.parentElement;
+        for (let up = 0; box && box !== document.body && up < 5; up++, box = box.parentElement) {
+          const inputs = [...box.querySelectorAll('input, select, textarea')].filter(i => !['hidden', 'submit', 'button'].includes((i.type || '').toLowerCase()));
+          const boxes = inputs.filter(i => i.type === 'checkbox');
+          if (boxes.length > 1 && boxes.length === inputs.length) {
+            if (!box.dataset.jsGroup) box.dataset.jsGroup = 'g' + (gid++);
+            return 'g:' + box.dataset.jsGroup;
+          }
+          if (inputs.length > boxes.length) break;   // reached a wrapper that mixes in other questions
+          if (box.matches('fieldset, [role=group]')) break;
+        }
+        return null;
+      };
+      const out = [], groups = {}, checks = {}; let n = 0;
       for (const el of document.querySelectorAll('input, textarea, select')) {
         const type = (el.getAttribute('type') || 'text').toLowerCase();
         if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type) || el.disabled) continue;
@@ -43,13 +61,48 @@ public static class FormFieldMapper
           groups[key].options.push({ idx, label: clean(ol) });
           continue;
         }
-        if (type === 'checkbox') { out.push({ ...base, type: 'Checkbox' }); continue; }
+        if (type === 'checkbox') {
+          // Boxes sharing a name, or sitting in one fieldset / role=group, answer one question ("select the countries ...").
+          const key = checkGroupKey(el);
+          const ol = clean(el.labels && el.labels.length ? el.labels[0].innerText : (el.getAttribute('aria-label') || el.value || ''));
+          if (key) {
+            if (!checks[key]) { checks[key] = { ...base, type: 'Checkbox', els: [] }; out.push(checks[key]); }
+            checks[key].els.push(el); checks[key].options.push({ idx, label: ol });
+            if (required) checks[key].required = true;
+          } else out.push({ ...base, type: 'Checkbox' });
+          continue;
+        }
         if (type === 'file') { out.push({ ...base, type: 'File' }); continue; }
         if (el.tagName === 'SELECT') {
           base.options = [...el.options].map(o => clean(o.text)).filter(t => t && !/^(select|choose|--|please)/i.test(t)).map(t => ({ idx, label: t }));
           out.push({ ...base, type: 'Select' }); continue;
         }
         out.push({ ...base, type: el.tagName === 'TEXTAREA' ? 'Textarea' : 'Text' });
+      }
+      // The question of a checkbox group: the nearest text above the boxes that is not one of the box labels.
+      const questionOf = (els, opts) => {
+        const own = new Set(opts.map(o => o.label));
+        const lb = els[0].closest('[aria-labelledby]'); 
+        if (lb && !els.includes(lb)) { const t = document.getElementById(lb.getAttribute('aria-labelledby').split(' ')[0]); if (t && !own.has(clean(t.innerText))) return t.innerText; }
+        let box = els[0].parentElement;
+        while (box && !els.every(e => box.contains(e))) box = box.parentElement;
+        for (let up = 0; box && up < 4; up++, box = box.parentElement) {
+          for (const t of box.querySelectorAll('legend, label, h2, h3, h4, h5, p, [class*=label], [class*=question], [class*=title], span, div')) {
+            if (t.querySelector('input, select, textarea')) continue;
+            const txt = clean(t.innerText);
+            if (txt && !own.has(txt) && txt.length > 3) return t.innerText;
+          }
+        }
+        return els[0].name || '';
+      };
+      for (const f of out) {
+        if (!f.els) continue;
+        if (f.els.length > 1) {
+          const q = questionOf(f.els, f.options);
+          f.type = 'CheckboxGroup'; f.label = clean(q);
+          f.required = f.required || /\*\s*$/.test((q || '').trim());
+        } else { f.options = []; }   // a single box: plain yes/no checkbox, keeps its own label
+        delete f.els;
       }
       return out;
     }

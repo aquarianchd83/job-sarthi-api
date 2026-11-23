@@ -167,4 +167,56 @@ public class ApplyEngineBrowserTests : IAsyncLifetime
         Assert.Null(await PlaywrightApplierBase.FindFormFrameAsync(page, attempts: 1));
         Assert.Null(await PlaywrightApplierBase.BotCheckAsync(page, 200));
     }
+
+    // Stripe-style: a required question answered by ticking countries. Boxes have their own names and no fieldset.
+    private const string CountryForm = """
+    <form id="application_form" onsubmit="event.preventDefault()">
+      <div class="q"><label for="first_name">First Name *</label><input id="first_name" required></div>
+      <div class="q">
+        <div class="lbl">Please select the country or countries you anticipate working in. *</div>
+        <div class="opts">
+          <div><input type="checkbox" id="c1" name="c_au"><label for="c1">Australia</label></div>
+          <div><input type="checkbox" id="c2" name="c_in"><label for="c2">India</label></div>
+          <div><input type="checkbox" id="c3" name="c_sg"><label for="c3">Singapore</label></div>
+        </div>
+      </div>
+      <div class="q"><input type="checkbox" id="wa" name="wa"><label for="wa">Yes, send me WhatsApp messages</label></div>
+      <input type="file" name="resume">
+      <button type="submit">Submit</button>
+    </form>
+    """;
+
+    [Fact]
+    public async Task Checkbox_list_is_read_as_one_multi_select_question()
+    {
+        if (_browser is null) return;
+        var page = await _browser.NewPageAsync();
+        await page.SetContentAsync(CountryForm);
+        var fields = await FormFieldMapper.CollectAsync(page.MainFrame);
+        var group = Assert.Single(fields, f => f.Type == FieldType.CheckboxGroup);
+        Assert.StartsWith("Please select the country", group.Label);
+        Assert.Equal(new[] { "Australia", "India", "Singapore" }, group.Options.Select(o => o.Label));
+        Assert.Single(fields, f => f.Type == FieldType.Checkbox && f.Label.Contains("WhatsApp")); // a lone box stays yes/no
+
+        var o = await ApplyEngine.RunAsync(page, page.MainFrame, Ctx(false), ApplyEngine.DefaultSubmit, s => Task.FromResult<string?>(null));
+        Assert.Equal(OutcomeKind.NeedsInput, o.Kind);
+        var q = Assert.Single(o.Questions);
+        Assert.Equal("multi", q.Input);
+        Assert.Equal(3, q.Options!.Count);
+        Assert.DoesNotContain(o.Log, l => l.Contains("Australia"));   // choices are not dumped into the log
+    }
+
+    [Fact]
+    public async Task Chosen_countries_are_ticked()
+    {
+        if (_browser is null) return;
+        var page = await _browser.NewPageAsync();
+        await page.SetContentAsync(CountryForm);
+        var o = await ApplyEngine.RunAsync(page, page.MainFrame, Ctx(false, ("countries you anticipate working in", "India; Singapore")),
+            ApplyEngine.DefaultSubmit, s => Task.FromResult<string?>(null));
+        Assert.Equal(OutcomeKind.Filled, o.Kind);
+        Assert.False(await page.IsCheckedAsync("#c1"));
+        Assert.True(await page.IsCheckedAsync("#c2"));
+        Assert.True(await page.IsCheckedAsync("#c3"));
+    }
 }

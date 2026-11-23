@@ -83,8 +83,13 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
 
         // Replace any unanswered questions from the last run.
         db.PendingQuestions.RemoveRange(db.PendingQuestions.Where(q => q.ApplicationId == app.Id && !q.Resolved));
-        foreach (var (kind, prompt) in outcome.Questions)
-            db.PendingQuestions.Add(new PendingQuestion { ApplicationId = app.Id, Kind = kind, Prompt = prompt, CreatedAtUtc = DateTime.UtcNow });
+        foreach (var q in outcome.Questions)
+            db.PendingQuestions.Add(new PendingQuestion
+            {
+                ApplicationId = app.Id, Kind = q.Kind, Prompt = TextUtil.Truncate(q.Prompt, 500), InputType = q.Input,
+                OptionsJson = q.Options is { Count: > 0 } o ? System.Text.Json.JsonSerializer.Serialize(o) : null,
+                CreatedAtUtc = DateTime.UtcNow,
+            });
 
         switch (outcome.Kind)
         {

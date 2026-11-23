@@ -46,8 +46,12 @@ public static class FieldPlanner
         var (first, last) = SplitName(p.FullName);
         var actions = new List<PlannedAction>();
 
-        foreach (var f in fields)
+        foreach (var raw in fields)
         {
+            // A question with no visible label still has to be answerable: name it after the field.
+            var f = string.IsNullOrWhiteSpace(raw.Label)
+                ? raw with { Label = $"Unlabelled field ({(raw.Name.Length > 0 ? raw.Name : raw.Id.Length > 0 ? raw.Id : "#" + raw.Idx)})" }
+                : raw;
             var role = Classify(f);
             string? known = role switch
             {
@@ -68,20 +72,20 @@ public static class FieldPlanner
                 case FieldRole.Resume:
                     actions.Add(!string.IsNullOrEmpty(input.ResumePath) && File.Exists(input.ResumePath)
                         ? new UploadAction(f.Idx, f.Label, input.ResumePath)
-                        : f.Required ? new AskAction(f.Idx, f.Label + " (upload a resume in Resume & Profile first)") : new SkipAction(f.Idx, f.Label, "no resume file"));
+                        : f.Required ? new AskAction(f.Idx, f.Label + " (upload a resume in Resume & Profile first)", FieldType.File) : new SkipAction(f.Idx, f.Label, "no resume file"));
                     continue;
                 case FieldRole.CoverLetter when f.Type == FieldType.File:
-                    actions.Add(f.Required ? new AskAction(f.Idx, f.Label) : new SkipAction(f.Idx, f.Label, "optional cover letter upload"));
+                    actions.Add(f.Required ? Ask(f) : new SkipAction(f.Idx, f.Label, "optional cover letter upload"));
                     continue;
                 case FieldRole.Eeo:
                     // Never answered automatically. Left blank when optional.
-                    actions.Add(f.Required ? new AskAction(f.Idx, f.Label) : new SkipAction(f.Idx, f.Label, "optional demographic question left blank"));
+                    actions.Add(f.Required ? Ask(f) : new SkipAction(f.Idx, f.Label, "optional demographic question left blank"));
                     continue;
             }
 
             if (string.IsNullOrWhiteSpace(known))
             {
-                actions.Add(f.Required ? new AskAction(f.Idx, f.Label) : new SkipAction(f.Idx, f.Label, "optional, no saved answer"));
+                actions.Add(f.Required ? Ask(f) : new SkipAction(f.Idx, f.Label, "optional, no saved answer"));
                 continue;
             }
 
@@ -93,7 +97,7 @@ public static class FieldPlanner
                 case FieldType.Select:
                 {
                     var opt = AnswerMatcher.ChooseOption(f.Options.Select(o => o.Label).ToList(), known);
-                    actions.Add(opt is null ? (f.Required ? new AskAction(f.Idx, f.Label) : new SkipAction(f.Idx, f.Label, "no matching option"))
+                    actions.Add(opt is null ? (f.Required ? Ask(f) : new SkipAction(f.Idx, f.Label, "no matching option"))
                                             : new SelectAction(f.Idx, f.Label, opt));
                     break;
                 }
@@ -101,13 +105,27 @@ public static class FieldPlanner
                 {
                     var opt = AnswerMatcher.ChooseOption(f.Options.Select(o => o.Label).ToList(), known);
                     var picked = f.Options.FirstOrDefault(o => o.Label == opt);
-                    actions.Add(picked is null ? (f.Required ? new AskAction(f.Idx, f.Label) : new SkipAction(f.Idx, f.Label, "no matching option"))
+                    actions.Add(picked is null ? (f.Required ? Ask(f) : new SkipAction(f.Idx, f.Label, "no matching option"))
                                                : new ClickAction(picked.Idx, f.Label + ": " + picked.Label));
+                    break;
+                }
+                case FieldType.CheckboxGroup:
+                {
+                    // Every saved choice must match a box, else ask again rather than tick a wrong set.
+                    var labels = f.Options.Select(o => o.Label).ToList();
+                    var wanted = Question.SplitMulti(known).Select(w => AnswerMatcher.ChooseOption(labels, w)).ToList();
+                    if (wanted.Count == 0 || wanted.Any(w => w is null))
+                    {
+                        actions.Add(f.Required ? Ask(f) : new SkipAction(f.Idx, f.Label, "no matching option"));
+                        break;
+                    }
+                    foreach (var pick in f.Options.Where(o => wanted.Contains(o.Label)))
+                        actions.Add(new ClickAction(pick.Idx, f.Label + ": " + pick.Label));
                     break;
                 }
                 case FieldType.Checkbox:
                     actions.Add(AnswerMatcher.IsYes(known) ? new ClickAction(f.Idx, f.Label)
-                              : f.Required ? new AskAction(f.Idx, f.Label) : new SkipAction(f.Idx, f.Label, "answer is not yes"));
+                              : f.Required ? Ask(f) : new SkipAction(f.Idx, f.Label, "answer is not yes"));
                     break;
                 default:
                     actions.Add(new SkipAction(f.Idx, f.Label, "unsupported field"));
@@ -115,6 +133,15 @@ public static class FieldPlanner
             }
         }
         return actions;
+    }
+
+    /// <summary>Ask for the field, offering its own choices when it has them.</summary>
+    private static AskAction Ask(FormField f)
+    {
+        if (f.Type is not (FieldType.Select or FieldType.Radio or FieldType.CheckboxGroup)) return new(f.Idx, f.Label, f.Type);
+        var options = f.Options.Select(o => o.Label).Where(l => l.Length > 0).Distinct().ToList();
+        // No readable choices (a custom widget): a typed answer is the best we can do.
+        return options.Count == 0 ? new(f.Idx, f.Label, FieldType.Text) : new(f.Idx, f.Label, f.Type, options);
     }
 
     public static (string First, string Last) SplitName(string full)

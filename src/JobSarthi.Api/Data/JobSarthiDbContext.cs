@@ -125,6 +125,7 @@ public class JobSarthiDbContext : DbContext
             e.HasIndex(x => x.ApplicationId);
             e.Property(x => x.Kind).HasMaxLength(20);
             e.Property(x => x.Prompt).HasMaxLength(500);
+            e.Property(x => x.InputType).HasMaxLength(20).HasDefaultValue("text");
         });
         b.Entity<SavedAnswer>(e => { e.Property(x => x.Question).HasMaxLength(300); e.HasIndex(x => x.Question).IsUnique(); });
         b.Entity<AppSetting>().Property(x => x.ApplyMode).HasConversion<string>().HasMaxLength(20);

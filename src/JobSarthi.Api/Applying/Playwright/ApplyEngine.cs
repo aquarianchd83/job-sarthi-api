@@ -48,8 +48,11 @@ public static class ApplyEngine
         if (asks.Count > 0)
         {
             var shot1 = await screenshot("needs-input");
-            var questions = asks.Select(a => a.Label).Distinct().Select(l => ("question", l)).ToList();
-            log.Add($"Needs your answer: {string.Join("; ", questions.Select(q => q.Item2))}");
+            var questions = asks.GroupBy(a => a.Label).Select(g => g.First())
+                .Select(a => new Question("question", a.Label, a.Input, a.Options)).ToList();
+            // One short line per question. Choices are shown in the answer box, not dumped into the log.
+            log.Add($"{questions.Count} question(s) need your answer");
+            foreach (var q in questions) log.Add($"Needs your answer: {ShortLabel(q.Prompt)}{(q.Options is { Count: > 0 } o ? $" (choose from {o.Count} options)" : "")}");
             return new ApplyOutcome(OutcomeKind.NeedsInput, $"{questions.Count} question(s) need your answer", shot1, questions, log);
         }
 
@@ -105,6 +108,8 @@ public static class ApplyEngine
         log.Add(why);
         return ApplyOutcome.Failed(why, after, log);
     }
+
+    private static string ShortLabel(string label) => label.Length <= 120 ? label : label[..117].TrimEnd() + "...";
 
     public static async Task<(string Kind, string Prompt)?> DetectBlockerAsync(IFrame frame)
     {
