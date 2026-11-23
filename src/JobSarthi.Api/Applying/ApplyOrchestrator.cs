@@ -99,6 +99,12 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
             case OutcomeKind.Filled:
                 await Set(ApplicationStatus.AwaitingApproval, "Ready for your approval", outcome.ScreenshotFile);
                 break;
+            case OutcomeKind.ManualOnly:
+                // Open job, but this site cannot be auto-applied (custom form or bot check). Not a failure: it becomes a Manual job with a draft.
+                var moved = await MoveToManualAsync(job.Id, outcome.Message, ct);
+                if (outcome.ScreenshotFile is not null) app.ScreenshotFile = outcome.ScreenshotFile;
+                await DraftAsync(app, moved, Set, ct, outcome.Message);
+                break;
             case OutcomeKind.NeedsInput or OutcomeKind.Blocked:
                 await Set(ApplicationStatus.PausedNeedsInput, "Paused: " + outcome.Message, outcome.ScreenshotFile);
                 break;
@@ -113,8 +119,14 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
     /// Email and Manual apply (and ATS without an applier, e.g. Workable). Nothing is ever submitted here.
     /// Manual: with Playwright MCP switched on, the apply page is opened and pre-filled in your browser.
     /// </summary>
-    private async Task DraftAsync(JobApplication app, Job job, Func<ApplicationStatus, string, string?, Task> set, CancellationToken ct)
+    private async Task DraftAsync(JobApplication app, Job job, Func<ApplicationStatus, string, string?, Task> set, CancellationToken ct, string? whyManual = null)
     {
+        if (whyManual is not null)
+        {
+            // Say why auto-apply did not run, then prepare the draft as for any Manual job.
+            var inner = set;
+            set = (status, message, shot) => inner(status, status == ApplicationStatus.DraftReady ? $"{whyManual} {message}" : message, shot);
+        }
         if (job.ApplyCategory == ApplyCategory.Email)
         {
             await set(ApplicationStatus.DraftReady, $"Email draft ready for {job.ApplyEmail}. Attach your resume and send it from your mail app.", null);
@@ -144,6 +156,17 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
                 await set(ApplicationStatus.DraftReady, "Browser pre-fill did not work (" + outcome.Message + "). The link and cover letter are ready, apply yourself.", null);
                 break;
         }
+    }
+
+    private async Task<Job> MoveToManualAsync(int jobId, string reason, CancellationToken ct)
+    {
+        var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
+        job.ApplyCategory = ApplyCategory.Manual;
+        job.AtsKey = null;
+        job.CanAutoApply = false;
+        job.CategoryReason = TextUtil.Truncate(reason, 300);
+        await db.SaveChangesAsync(ct);
+        return job;
     }
 
     private async Task MarkJobClosedAsync(int jobId, string reason, CancellationToken ct)

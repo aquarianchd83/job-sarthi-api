@@ -16,7 +16,7 @@ public static class ClosedJobDetector
         + @"|(?:job|posting|listing|position|vacancy|advert) (?:has )?expired"
         + @"|(?:position|role|job) (?:has been|is) (?:already )?filled"
         + @"|(?:hiring|recruitment|recruiting) (?:for this (?:role|position|job) )?(?:is |has )?(?:now )?closed"
-        + @"|the job you are looking for (?:is no longer available|no longer exists|has (?:been )?(?:closed|expired|removed))"
+        + @"|the job you are looking for (?:is no longer (?:available|open)|no longer exists|has (?:been )?(?:closed|expired|removed))"
         + @"|this job (?:is )?no longer (?:exists|available|active|open)"
         + @"|(?:sorry, )?this (?:job|position|opening) (?:is )?(?:no longer|not) (?:available|active|open)"
         + @"|deadline (?:for applications )?has passed"

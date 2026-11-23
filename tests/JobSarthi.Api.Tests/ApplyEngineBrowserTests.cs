@@ -146,4 +146,25 @@ public class ApplyEngineBrowserTests : IAsyncLifetime
         Assert.Equal(OutcomeKind.Failed, o.Kind);
         Assert.Contains("already registered", o.Message);
     }
+
+    [Fact]
+    public async Task Bot_wall_is_recognised_and_has_no_form()
+    {
+        if (_browser is null) return;
+        var page = await _browser.NewPageAsync();
+        await page.SetContentAsync("<title>Just a moment...</title><body><h1>Checking your browser before accessing the site</h1></body>");
+        Assert.Null(await PlaywrightApplierBase.FindFormFrameAsync(page, attempts: 1));
+        Assert.NotNull(await PlaywrightApplierBase.BotCheckAsync(page, 403));
+    }
+
+    [Fact]
+    public async Task Custom_careers_form_is_not_a_bot_check()
+    {
+        if (_browser is null) return;
+        var page = await _browser.NewPageAsync();
+        // A company-built form (React, no file input, no apply action) is what stripe.com shows: not fillable, but not a bot wall either.
+        await page.SetContentAsync("<main><h1>Software Engineer</h1><div role='form'><input name='first'><button>Next</button></div></main>");
+        Assert.Null(await PlaywrightApplierBase.FindFormFrameAsync(page, attempts: 1));
+        Assert.Null(await PlaywrightApplierBase.BotCheckAsync(page, 200));
+    }
 }

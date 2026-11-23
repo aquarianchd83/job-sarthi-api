@@ -26,8 +26,11 @@ public record PlanInput(UserProfile Profile, string? ResumePath, string CoverLet
 
 public record ApplyContext(int ApplicationId, Job Job, PlanInput Plan, bool Submit);
 
-/// <summary>Closed: the page says the job no longer takes applications.</summary>
-public enum OutcomeKind { Filled, Submitted, NeedsInput, Blocked, Failed, Closed }
+/// <summary>
+/// Closed: the page says the job no longer takes applications.
+/// ManualOnly: the job is open but auto-apply cannot work there (custom form, bot check). It moves to Manual apply with a draft.
+/// </summary>
+public enum OutcomeKind { Filled, Submitted, NeedsInput, Blocked, Failed, Closed, ManualOnly }
 
 /// <param name="Questions">(kind, prompt) pairs. kind is question, captcha or otp.</param>
 public record ApplyOutcome(OutcomeKind Kind, string Message, string? ScreenshotFile, List<(string Kind, string Prompt)> Questions, List<string> Log)
@@ -35,4 +38,8 @@ public record ApplyOutcome(OutcomeKind Kind, string Message, string? ScreenshotF
     public static ApplyOutcome Failed(string message, string? shot, List<string> log) => new(OutcomeKind.Failed, message, shot, new(), log);
     public static ApplyOutcome Closed(string phrase, string? shot, List<string> log) =>
         new(OutcomeKind.Closed, $"The page says \"{phrase}\". Job ignored.", shot, new(), log);
+    /// <summary>Closed for a reason other than a phrase on the page (ATS API says 404, apply page gone).</summary>
+    public static ApplyOutcome ClosedBecause(string reason, string? shot, List<string> log) =>
+        new(OutcomeKind.Closed, $"Closed: {reason}. Job ignored.", shot, new(), log);
+    public static ApplyOutcome ManualOnly(string reason, string? shot, List<string> log) => new(OutcomeKind.ManualOnly, reason, shot, new(), log);
 }

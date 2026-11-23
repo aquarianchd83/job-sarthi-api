@@ -15,7 +15,7 @@ public record PendingQuestionDto(int Id, string Kind, string Prompt);
 public record ApplicationDetail(int Id, int JobId, string Title, string Company, string SourceKey, string Status, string Url,
     DateTime UpdatedAtUtc, DateTime? SubmittedAtUtc, string? CoverLetter, bool HasScreenshot,
     List<LogLine> Log, List<PendingQuestionDto> Pending,
-    string? ApplyCategory, string? ApplyUrl, string? ApplyEmail, string? EmailSubject);
+    string? ApplyCategory, string? ApplyUrl, string? ApplyEmail, string? EmailSubject, string? CategoryReason);
 public record AnswerRequest(int QuestionId, string Answer, bool Save);
 
 [ApiController]
@@ -200,6 +200,6 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
             : null;
         return new ApplicationDetail(row.a.Id, row.a.JobId, row.j.Title, row.j.Company, row.j.SourceKey, row.a.Status.ToString(), row.j.Url,
             row.a.UpdatedAtUtc, row.a.SubmittedAtUtc, row.a.CoverLetter, row.a.ScreenshotFile is not null, log, pending,
-            row.j.ApplyCategory?.ToString(), row.j.ApplyUrl ?? row.j.Url, row.j.ApplyEmail, subject);
+            row.j.ApplyCategory?.ToString(), row.j.ApplyUrl ?? row.j.Url, row.j.ApplyEmail, subject, row.j.CategoryReason);
     }
 }

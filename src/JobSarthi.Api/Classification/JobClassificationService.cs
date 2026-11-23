@@ -31,7 +31,11 @@ public class JobClassificationService(JobSarthiDbContext db, IHttpClientFactory 
             return;
         }
         if (job.IsClosed) return;   // closed earlier by the apply-page check: stays closed
-        Apply(job, ApplyClassifier.Classify(job.Url, job.Description));
+        var c = ApplyClassifier.Classify(job.Url, job.Description);
+        // A Greenhouse job shown on the company's own site (stripe.com/careers/...) is still a Greenhouse job: its own form can be used.
+        if (c.Category != ApplyCategory.Api && GreenhouseJobRef.From(job) is { } gh)
+            c = new ApplyClassification(ApplyCategory.Api, "greenhouse", job.Url, null, $"Greenhouse job ({gh.Board} board), applied through Greenhouse's own form");
+        Apply(job, c);
     }
 
     public static void MarkClosed(Job job, string reason)
