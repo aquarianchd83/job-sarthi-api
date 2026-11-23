@@ -429,4 +429,5 @@ FodyWeavers.xsd
 appsettings.Local.json
 
 # Uploaded resumes and screenshots
-src/JobSarthi.Api/data/
+src/JobSarthi.Api/[Dd]ata/resumes/
+src/JobSarthi.Api/[Dd]ata/screenshots/

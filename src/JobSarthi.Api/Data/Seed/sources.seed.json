@@ -1,0 +1,9 @@
+[
+  { "key": "greenhouse",     "displayName": "Greenhouse",              "capability": "FetchAndApply", "enabled": true },
+  { "key": "lever",          "displayName": "Lever",                   "capability": "FetchAndApply", "enabled": true },
+  { "key": "ashby",          "displayName": "Ashby",                   "capability": "FetchAndApply", "enabled": false },
+  { "key": "remoteok",       "displayName": "RemoteOK",                "capability": "FetchOnly",     "enabled": true },
+  { "key": "weworkremotely", "displayName": "WeWorkRemotely",          "capability": "FetchOnly",     "enabled": true },
+  { "key": "naukri",         "displayName": "Naukri (email alerts)",   "capability": "AlertsOnly",    "enabled": false },
+  { "key": "linkedin",       "displayName": "LinkedIn (email alerts)", "capability": "AlertsOnly",    "enabled": false }
+]
