@@ -26,10 +26,13 @@ public record PlanInput(UserProfile Profile, string? ResumePath, string CoverLet
 
 public record ApplyContext(int ApplicationId, Job Job, PlanInput Plan, bool Submit);
 
-public enum OutcomeKind { Filled, Submitted, NeedsInput, Blocked, Failed }
+/// <summary>Closed: the page says the job no longer takes applications.</summary>
+public enum OutcomeKind { Filled, Submitted, NeedsInput, Blocked, Failed, Closed }
 
 /// <param name="Questions">(kind, prompt) pairs. kind is question, captcha or otp.</param>
 public record ApplyOutcome(OutcomeKind Kind, string Message, string? ScreenshotFile, List<(string Kind, string Prompt)> Questions, List<string> Log)
 {
     public static ApplyOutcome Failed(string message, string? shot, List<string> log) => new(OutcomeKind.Failed, message, shot, new(), log);
+    public static ApplyOutcome Closed(string phrase, string? shot, List<string> log) =>
+        new(OutcomeKind.Closed, $"The page says \"{phrase}\". Job ignored.", shot, new(), log);
 }

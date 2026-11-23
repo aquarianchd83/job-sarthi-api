@@ -1,7 +1,9 @@
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using JobSarthi.Api.Applying;
+using JobSarthi.Api.Classification;
 using JobSarthi.Api.Data;
+using JobSarthi.Api.Mcp;
 using JobSarthi.Api.Notifications;
 using JobSarthi.Api.Scheduling;
 using JobSarthi.Api.Sources;
@@ -33,8 +35,10 @@ builder.Services.AddDbContext<JobSarthiDbContext>(o =>
 builder.Services.Configure<ImapOptions>(builder.Configuration.GetSection("Imap"));
 builder.Services.AddSingleton<ImapAlertReader>();
 builder.Services.AddJobSources();          // plugin registration lives in JobSourceExtensions
+builder.Services.AddClassification();      // API / Email / Manual apply, closed-job check
 builder.Services.AddTailoring(builder.Configuration);
 builder.Services.AddApplying(builder.Configuration);
+builder.Services.AddMcpClient(builder.Configuration);   // app is an MCP client (e.g. Playwright MCP), never a server
 // Later stages register INotifier the same way.
 builder.Services.AddNotifications(builder.Configuration);
 builder.Services.AddScheduling(backgroundScheduler: !oneShot);   // the cron job replaces the in-app timer

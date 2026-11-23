@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using JobSarthi.Api.Applying;
+using JobSarthi.Api.Classification;
 using JobSarthi.Api.Common;
 using JobSarthi.Api.Data;
 using JobSarthi.Api.Domain.Entities;
@@ -15,7 +16,7 @@ namespace JobSarthi.Api.Scheduling;
 /// The daily routine: fetch from enabled sources, filter and score, then tailor and queue applications for the best
 /// auto-apply jobs. Approval mode stops before submitting. Only one run at a time.
 /// </summary>
-public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobScoringService scoring, TailoringService tailoring,
+public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobScoringService scoring, JobClassificationService classification, TailoringService tailoring,
     ApplyStarter starter, AlertService alerts, SummaryService summary, ILogger<DailyRunPipeline> log)
 {
     /// <summary>Held for the whole run.</summary>
@@ -49,6 +50,13 @@ public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobS
             run.Shortlisted = s.Shortlisted;
             notes.Add($"{s.Shortlisted} of {s.Total} jobs match your rules");
 
+            // 2b. Open the apply pages of the shortlist and drop jobs that no longer take applications.
+            var pages = await classification.CheckApplyPagesAsync(40, ct);
+            run.Shortlisted -= pages.Closed;
+            if (pages.Checked > 0)
+                notes.Add($"Checked {pages.Checked} apply page(s): {pages.Closed} closed and ignored, {pages.Upgraded} moved to API apply");
+            notes.Add(await CategoryNoteAsync(ct));
+
             // 3. Tailor and queue applications.
             run.Queued = await QueueApplicationsAsync(notes, ct);
         }
@@ -81,6 +89,14 @@ public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobS
         catch (Exception ex) { log.LogWarning(ex, "Could not send the daily summary"); return null; }
     }
 
+    private async Task<string> CategoryNoteAsync(CancellationToken ct)
+    {
+        var counts = await db.Jobs.Where(j => j.Shortlisted && !j.IsClosed && j.ApplyCategory != null)
+            .GroupBy(j => j.ApplyCategory).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
+        int C(ApplyCategory c) => counts.FirstOrDefault(x => x.Key == c)?.Count ?? 0;
+        return $"Shortlist by apply type: {C(ApplyCategory.Api)} API, {C(ApplyCategory.Email)} email, {C(ApplyCategory.Manual)} manual";
+    }
+
     private async Task<int> QueueApplicationsAsync(List<string> notes, CancellationToken ct)
     {
         var settings = await db.Settings.AsNoTracking().FirstAsync(ct);
@@ -94,7 +110,7 @@ public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobS
         if (budget <= 0) { notes.Add($"Applications skipped: today's limit of {settings.DailyApplyLimit} is used"); return 0; }
 
         var candidates = await (from j in db.Jobs.AsNoTracking()
-                                where j.Shortlisted && j.CanAutoApply
+                                where j.Shortlisted && j.CanAutoApply && !j.IsClosed && j.ApplyCategory == ApplyCategory.Api
                                 join a in db.Applications.AsNoTracking() on j.Id equals a.JobId into apps
                                 from a in apps.DefaultIfEmpty()
                                 select new ApplyCandidate(j.Id, j.FitScore ?? 0, a == null ? null : a.Status)).ToListAsync(ct);

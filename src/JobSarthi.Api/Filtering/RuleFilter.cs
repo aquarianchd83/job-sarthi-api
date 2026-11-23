@@ -59,6 +59,9 @@ public static class RuleFilter
 
     public static string? Check(Job job, Rule rule, FilterContext? ctx = null)
     {
+        // "No longer accepting applications" and the like: ignored before anything else.
+        if (job.IsClosed) return "No longer accepting applications";
+
         var company = job.Company.ToLowerInvariant();
         foreach (var bad in rule.BlacklistedCompanies.Where(b => !string.IsNullOrWhiteSpace(b)))
             if (company.Contains(bad.Trim().ToLowerInvariant())) return $"Blacklisted company ({bad.Trim()})";

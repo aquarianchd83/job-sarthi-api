@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using JobSarthi.Api.Classification;
 using JobSarthi.Api.Common;
+using JobSarthi.Api.Mcp;
 using JobSarthi.Api.Data;
 using JobSarthi.Api.Domain.Entities;
 using JobSarthi.Api.Domain.Enums;
@@ -11,7 +13,7 @@ namespace JobSarthi.Api.Applying;
 /// Runs one application end to end: checks the daily limit and the gap between applies, picks the applier for the source,
 /// then turns the outcome into a status, a log and (when needed) questions for you.
 /// </summary>
-public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> appliers, AlertService alerts, ILogger<ApplyOrchestrator> log)
+public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> appliers, McpApplyDrafter drafter, AlertService alerts, ILogger<ApplyOrchestrator> log)
 {
     public async Task RunAsync(int applicationId, bool submitRequested, CancellationToken ct)
     {
@@ -28,8 +30,17 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
             await db.SaveChangesAsync(ct);
         }
 
-        var applier = appliers.FirstOrDefault(a => a.SourceKey == job.SourceKey);
-        if (applier is null) { await Set(ApplicationStatus.ManualApply, $"{job.SourceKey} cannot be applied to automatically. Apply on the site."); return; }
+        if (job.IsClosed) { await Set(ApplicationStatus.Cancelled, $"Job ignored: {job.ClosedReason ?? "no longer accepting applications"}"); return; }
+
+        // API apply: the ATS of the apply link picks the applier (a RemoteOK job linking to Greenhouse uses the Greenhouse applier).
+        // Jobs classified before categories existed fall back to their source.
+        var key = job.AtsKey ?? (job.ApplyCategory is null ? job.SourceKey : null);
+        var applier = key is null ? null : appliers.FirstOrDefault(a => a.SourceKey == key);
+        if (applier is null)
+        {
+            await DraftAsync(app, job, Set, ct);
+            return;
+        }
 
         // Daily limit and gap only matter when we are about to submit for real.
         if (submitRequested)
@@ -77,6 +88,10 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
 
         switch (outcome.Kind)
         {
+            case OutcomeKind.Closed:
+                await MarkJobClosedAsync(job.Id, outcome.Message, ct);
+                await Set(ApplicationStatus.Cancelled, outcome.Message, outcome.ScreenshotFile);
+                break;
             case OutcomeKind.Submitted:
                 app.SubmittedAtUtc = DateTime.UtcNow;
                 await Set(ApplicationStatus.Submitted, "Application submitted", outcome.ScreenshotFile);
@@ -92,5 +107,50 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
                 await alerts.RaiseAsync("apply-failed", $"{job.Title} at {(job.Company.Length > 0 ? job.Company : job.SourceKey)}: {outcome.Message}", ct);
                 break;
         }
+        }
+
+    /// <summary>
+    /// Email and Manual apply (and ATS without an applier, e.g. Workable). Nothing is ever submitted here.
+    /// Manual: with Playwright MCP switched on, the apply page is opened and pre-filled in your browser.
+    /// </summary>
+    private async Task DraftAsync(JobApplication app, Job job, Func<ApplicationStatus, string, string?, Task> set, CancellationToken ct)
+    {
+        if (job.ApplyCategory == ApplyCategory.Email)
+        {
+            await set(ApplicationStatus.DraftReady, $"Email draft ready for {job.ApplyEmail}. Attach your resume and send it from your mail app.", null);
+            return;
+        }
+        if (!drafter.Enabled)
+        {
+            await set(ApplicationStatus.DraftReady, "Cover letter and link are ready. Open the link and apply (switch on Playwright MCP to pre-fill the form).", null);
+            return;
+        }
+
+        var profile = await db.Profiles.AsNoTracking().FirstAsync(ct);
+        var resumePath = await db.Resumes.AsNoTracking().OrderByDescending(r => r.UploadedAtUtc).Select(r => r.StoragePath).FirstOrDefaultAsync(ct);
+        var answers = (await db.SavedAnswers.AsNoTracking().ToListAsync(ct)).Select(a => (a.Question, a.Answer)).ToList();
+        var outcome = await drafter.PrepareAsync(new ApplyContext(app.Id, job, new PlanInput(profile, resumePath, app.CoverLetter ?? "", answers), Submit: false), ct);
+        foreach (var line in outcome.Log) db.ApplicationLogs.Add(new ApplicationLog { ApplicationId = app.Id, AtUtc = DateTime.UtcNow, Message = line });
+        switch (outcome.Kind)
+        {
+            case OutcomeKind.Closed:
+                await MarkJobClosedAsync(job.Id, outcome.Message, ct);
+                await set(ApplicationStatus.Cancelled, outcome.Message, null);
+                break;
+            case OutcomeKind.Filled:
+                await set(ApplicationStatus.DraftReady, outcome.Message, null);
+                break;
+            default:
+                await set(ApplicationStatus.DraftReady, "Browser pre-fill did not work (" + outcome.Message + "). The link and cover letter are ready, apply yourself.", null);
+                break;
+        }
+    }
+
+    private async Task MarkJobClosedAsync(int jobId, string reason, CancellationToken ct)
+    {
+        var job = await db.Jobs.FirstAsync(j => j.Id == jobId, ct);
+        JobClassificationService.MarkClosed(job, reason);
+        job.PageCheckedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(ct);
     }
 }
