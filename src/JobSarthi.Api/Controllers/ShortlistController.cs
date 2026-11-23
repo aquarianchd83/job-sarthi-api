@@ -14,9 +14,9 @@ public class ShortlistController(JobSarthiDbContext db) : ControllerBase
 {
     /// <summary>Jobs that passed your rules, best fit first.</summary>
     [HttpGet]
-    public async Task<IEnumerable<ShortlistJobDto>> List([FromQuery] int take = 100, [FromQuery] int minScore = 0) =>
+    public async Task<IEnumerable<ShortlistJobDto>> List([FromQuery] int take = 100, [FromQuery] int minScore = 0, [FromQuery] int maxScore = 100) =>
         await db.Jobs.AsNoTracking()
-            .Where(j => j.Shortlisted && j.FitScore >= minScore)
+            .Where(j => j.Shortlisted && j.FitScore >= minScore && j.FitScore <= maxScore)
             .OrderByDescending(j => j.FitScore).ThenByDescending(j => j.FetchedAtUtc)
             .Take(Math.Clamp(take, 1, 500))
             .Select(j => new ShortlistJobDto(j.Id, j.SourceKey, j.Title, j.Company, j.Location, j.WorkMode.ToString(),

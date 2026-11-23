@@ -19,6 +19,8 @@ public class ApplyQueue
     }
 
     public bool IsActive(int applicationId) => _active.ContainsKey(applicationId);
+    /// <summary>True when nothing is waiting or running.</summary>
+    public bool IsIdle => _active.IsEmpty;
     public void Done(int applicationId) => _active.TryRemove(applicationId, out _);
     public IAsyncEnumerable<ApplyRequest> ReadAllAsync(CancellationToken ct) => _channel.Reader.ReadAllAsync(ct);
 }

@@ -12,25 +12,28 @@ public class JobScoringService(JobSarthiDbContext db)
     public async Task<ScoringSummary> ScoreAllAsync(CancellationToken ct)
     {
         var rule = await db.Rules.AsNoTracking().FirstOrDefaultAsync(ct) ?? new Rule();
-        var userYears = (await db.Profiles.AsNoTracking().Select(p => (int?)p.TotalExperienceYears).FirstOrDefaultAsync(ct))
-                        ?? 0;
+        var profile = await db.Profiles.AsNoTracking().FirstOrDefaultAsync(ct) ?? new UserProfile();
+        var userYears = profile.TotalExperienceYears;
         if (userYears == 0) userYears = rule.MinExperience;
+        // Your skills and location from the profile make the filter and score about YOU, not just about the rule words.
+        var ctx = new RuleFilter.FilterContext(profile.Skills, profile.Location);
 
         var now = DateTime.UtcNow;
         var shortlisted = 0;
         var jobs = await db.Jobs.ToListAsync(ct);
         foreach (var job in jobs)
         {
-            var reason = RuleFilter.Check(job, rule);
+            var reason = RuleFilter.Check(job, rule, ctx);
             job.ScoredAtUtc = now;
             if (reason is null)
             {
-                var s = JobScorer.Score(job, rule, userYears);
-                job.Shortlisted = true;
-                job.FitScore = s.Score;
+                var s = JobScorer.Score(job, rule, userYears, profile.Skills);
+                var fitReason = RuleFilter.FitRangeReason(s.Score, rule);
+                job.Shortlisted = fitReason is null;
+                job.FitScore = s.Score;          // kept even when outside the range, so you can see why
                 job.ScoreNotes = s.Notes;
-                job.RejectReason = null;
-                shortlisted++;
+                job.RejectReason = fitReason;
+                if (fitReason is null) shortlisted++;
             }
             else
             {

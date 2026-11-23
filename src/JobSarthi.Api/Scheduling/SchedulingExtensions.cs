@@ -2,11 +2,12 @@ namespace JobSarthi.Api.Scheduling;
 
 public static class SchedulingExtensions
 {
-    public static IServiceCollection AddScheduling(this IServiceCollection services)
+    /// <param name="backgroundScheduler">False for the cron-style --run-daily mode, where Task Scheduler decides when to run.</param>
+    public static IServiceCollection AddScheduling(this IServiceCollection services, bool backgroundScheduler = true)
     {
         services.AddScoped<DailyRunPipeline>();
         services.AddSingleton<DailyRunLauncher>();
-        services.AddHostedService<DailyRunHostedService>();
+        if (backgroundScheduler) services.AddHostedService<DailyRunHostedService>();
         return services;
     }
 }

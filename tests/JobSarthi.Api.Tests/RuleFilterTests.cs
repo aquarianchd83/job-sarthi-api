@@ -11,8 +11,9 @@ public class RuleFilterTests
     {
         Roles = { "Senior .NET Developer", "Full Stack Developer" },
         MinExperience = 5, MaxExperience = 12,
-        Locations = { "Bengaluru", "Pune", "Remote" },
-        WorkMode = null,
+        // Hybrid or onsite in my own city, remote everywhere else.
+        LocationPrefs = { new LocationPref { Place = "Pune", Modes = { "Hybrid", "Onsite" } } },
+        OtherModes = new(),
         Keywords = { "C#", "Angular" },
         BlacklistedCompanies = { "BadCorp" },
     };
@@ -35,19 +36,52 @@ public class RuleFilterTests
         Assert.Null(RuleFilter.Check(J("Full Stack Developer"), MyRules()));
     }
 
-    [Fact] public void Location_not_in_list_is_dropped() =>
-        Assert.Equal("Location not in your list", RuleFilter.Check(J("Senior .NET Developer", loc: "Austin, TX"), MyRules()));
+    // My rules: Pune = Hybrid or Onsite. Everywhere else = Remote only (OtherModes starts empty, so add Remote).
+    private static Rule PuneHybridElsewhereRemote() { var r = MyRules(); r.OtherModes = new() { "Remote" }; return r; }
 
-    [Fact] public void Remote_job_open_to_anywhere_passes_but_us_only_does_not()
+    [Fact] public void Onsite_or_hybrid_in_my_city_passes()
     {
-        Assert.Null(RuleFilter.Check(J("Senior .NET Developer", loc: "Anywhere in the World", mode: WorkMode.Remote), MyRules()));
-        Assert.NotNull(RuleFilter.Check(J("Senior .NET Developer", loc: "USA Only", mode: WorkMode.Remote), MyRules()));
+        Assert.Null(RuleFilter.Check(J("Senior .NET Developer", loc: "Pune, India", mode: WorkMode.Onsite), PuneHybridElsewhereRemote()));
+        Assert.Null(RuleFilter.Check(J("Senior .NET Developer", loc: "Pune", mode: WorkMode.Hybrid), PuneHybridElsewhereRemote()));
     }
 
-    [Fact] public void Work_mode_rule_is_enforced()
+    [Fact] public void Remote_in_my_city_is_dropped_because_i_only_want_hybrid_or_onsite_there() =>
+        Assert.Equal("In Pune you want Hybrid or Onsite, this job is Remote",
+            RuleFilter.Check(J("Senior .NET Developer", loc: "Pune", mode: WorkMode.Remote), PuneHybridElsewhereRemote()));
+
+    [Fact] public void Onsite_or_hybrid_in_another_city_is_dropped_but_remote_passes()
     {
-        var r = MyRules(); r.WorkMode = WorkMode.Remote;
-        Assert.NotNull(RuleFilter.Check(J("Senior .NET Developer"), r));
+        var r = PuneHybridElsewhereRemote();
+        Assert.StartsWith("Outside your listed places you want Remote", RuleFilter.Check(J("Senior .NET Developer", loc: "Bengaluru", mode: WorkMode.Onsite), r));
+        Assert.StartsWith("Outside your listed places", RuleFilter.Check(J("Senior .NET Developer", loc: "Mumbai", mode: WorkMode.Hybrid), r));
+        Assert.Null(RuleFilter.Check(J("Senior .NET Developer", loc: "Anywhere in the World", mode: WorkMode.Remote), r));
+    }
+
+    [Fact] public void Remote_job_restricted_to_another_region_is_still_dropped_by_the_region_check() =>
+        Assert.StartsWith("Location restricted", RuleFilter.Check(J("Senior .NET Developer", loc: "USA Only", mode: WorkMode.Remote), PuneHybridElsewhereRemote()));
+
+    [Fact] public void Each_place_has_its_own_modes()
+    {
+        var r = PuneHybridElsewhereRemote();
+        r.LocationPrefs.Add(new LocationPref { Place = "Bengaluru", Modes = { "Remote", "Hybrid", "Onsite" } });
+        Assert.Null(RuleFilter.Check(J("Senior .NET Developer", loc: "Bengaluru", mode: WorkMode.Onsite), r));
+        Assert.NotNull(RuleFilter.Check(J("Senior .NET Developer", loc: "Pune", mode: WorkMode.Remote), r));
+    }
+
+    [Fact] public void A_place_with_no_modes_ticked_accepts_nothing_there()
+    {
+        var r = new Rule { LocationPrefs = { new LocationPref { Place = "Pune" } } };
+        Assert.Equal("In Pune you want nothing, this job is Onsite", RuleFilter.Check(J("Any", loc: "Pune"), r));
+    }
+
+    [Fact] public void No_place_list_and_all_modes_means_no_location_preference() =>
+        Assert.Null(RuleFilter.LocationModeReason(J("Any", loc: "Austin, TX"), new Rule()));
+
+    [Fact] public void Only_remote_everywhere_with_no_places_listed_works_too()
+    {
+        var r = new Rule { OtherModes = new() { "Remote" } };
+        Assert.NotNull(RuleFilter.LocationModeReason(J("Any", loc: "Pune", mode: WorkMode.Onsite), r));
+        Assert.Null(RuleFilter.LocationModeReason(J("Any", loc: "Worldwide", mode: WorkMode.Remote), r));
     }
 
     [Fact] public void Too_much_required_experience_is_dropped() =>
@@ -69,8 +103,7 @@ public class RuleFilterTests
     [Fact] public void Alert_job_with_only_title_skips_location_and_mode_checks()
     {
         var alert = new Job { Title = "Senior .NET Developer", Company = "", Location = "", Description = "", WorkMode = WorkMode.Onsite };
-        var r = MyRules(); r.WorkMode = WorkMode.Remote;
-        Assert.Null(RuleFilter.Check(alert, r));
+        Assert.Null(RuleFilter.Check(alert, PuneHybridElsewhereRemote()));
     }
 
     [Fact] public void Empty_rules_let_everything_through() =>

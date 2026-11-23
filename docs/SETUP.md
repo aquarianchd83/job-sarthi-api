@@ -36,15 +36,45 @@ Restart the API after changing this file. Use **Settings > Send test message** t
 
 ## 3. Install on the dedicated server
 
+Pick **one** way to run the daily routine.
+
+### Option A: cron-style with Task Scheduler (recommended)
+
+The app is not left running. Task Scheduler starts `JobSarthi.Api.exe --run-daily` once a day. It fetches, filters,
+tailors, queues applications, waits for them to finish filling, sends the Telegram/email summary and exits
+(exit code 0 ok, 1 run failed, 2 already ran today).
+
 1. Build the web app: `cd job-sarthi-web && npm run build`.
-2. In an elevated PowerShell from the `job-sarthi-api` folder: `deploy\install-windows-service.ps1`.
-   It publishes the API, copies the Angular build into `wwwroot`, installs Chromium and creates the `JobSarthiApi`
-   Windows Service (starts with the server, restarts after a crash).
-3. The service account needs access to SQL Server. Easiest: run the service as a Windows user that has a SQL login
-   (`sc.exe config JobSarthiApi obj= "DOMAIN\user" password= "..."`), or use a SQL login in the connection string.
-4. To reach it from other devices, set `"Urls": "http://0.0.0.0:5000"` and open the port in Windows Firewall.
-   The app has no login. Keep it on your private network or put it behind a VPN or a reverse proxy with authentication.
-5. IIS is optional. If you prefer it, publish with `dotnet publish` and host the folder with the ASP.NET Core Hosting Bundle.
+2. Publish: `dotnet publish src/JobSarthi.Api -c Release -o C:\JobSarthi\app`, then copy
+   `job-sarthi-web\dist\job-sarthi-web\browser\*` into `C:\JobSarthi\app\wwwroot`.
+3. Install Chromium once: `C:\JobSarthi\app\JobSarthi.Api.exe --install-browsers` (or set `Apply.BrowserChannel`).
+4. Create the daily task. Check first with `-DryRun`, which changes nothing:
+   ```powershell
+   .\deploy\install-scheduled-task.ps1 -DryRun
+   .\deploy\install-scheduled-task.ps1 -TimeIst 09:00          # add -RunWhenLoggedOff to run with nobody logged in
+   Start-ScheduledTask -TaskName JobSarthiDaily               # test it now, then read C:\JobSarthi\app\logs\daily.log
+   ```
+   The time is given in IST and converted to the PC's clock. If the PC was off at that time, the task runs when it is
+   back (`StartWhenAvailable`). The app still allows only one scheduled run per IST day, so a second start does nothing.
+   To remove it: `.\deploy\install-scheduled-task.ps1 -Remove`.
+5. To review and approve applications, double-click `deploy\start-ui.cmd` (opens http://localhost:5000). Close it when done.
+   In **Settings**, you can switch off "Run automatically every day". The task replaces that timer, so this avoids a
+   second run if you keep the app open at run time.
+
+Keep the PC's time zone on India Standard Time or UTC. A zone with daylight saving moves the task by an hour twice a year.
+
+### Option B: always-on Windows Service
+
+`deploy\install-windows-service.ps1` publishes the app, installs Chromium and creates a `JobSarthiApi` service that starts
+with the server and restarts after a crash. The built-in timer then starts the daily run, and the app and its pages are always available.
+
+### Both options
+
+- The account that runs the task or service needs access to SQL Server. Easiest: a Windows user that has a SQL login,
+  or a SQL login in the connection string.
+- To reach the app from other devices, set `"Urls": "http://0.0.0.0:5000"` and open the port in Windows Firewall.
+  The app has no login. Keep it on your private network or behind a VPN or a reverse proxy with authentication.
+- IIS is optional. Host the published folder with the ASP.NET Core Hosting Bundle if you prefer it.
 
 ## 4. Daily routine
 

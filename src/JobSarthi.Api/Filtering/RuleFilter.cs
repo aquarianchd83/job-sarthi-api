@@ -1,14 +1,13 @@
 using System.Text.RegularExpressions;
 using JobSarthi.Api.Domain.Entities;
 using JobSarthi.Api.Domain.Enums;
+using JobSarthi.Api.Resume;
 
 namespace JobSarthi.Api.Filtering;
 
 /// <summary>Hard rules. Returns a reason when a job must be dropped, or null when it passes.</summary>
 public static class RuleFilter
 {
-    private static readonly string[] GenericRemote = { "anywhere", "worldwide", "global", "apac", "asia", "earth" };
-
     private static readonly Regex ExpA = new(@"(\d{1,2})\s*\+?\s*(?:years?|yrs?)[^.\n]{0,40}experience", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex ExpB = new(@"experience[^.\n]{0,40}?(\d{1,2})\s*\+?\s*(?:years?|yrs?)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex Lpa = new(@"(\d{1,3}(?:\.\d+)?)\s*(?:-|to)\s*(\d{1,3}(?:\.\d+)?)\s*(?:lpa|lakhs?|lacs?)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -17,7 +16,48 @@ public static class RuleFilter
     public static bool HasLimitedData(Job job) =>
         string.IsNullOrWhiteSpace(job.Description) && string.IsNullOrWhiteSpace(job.Location);
 
-    public static string? Check(Job job, Rule rule)
+    /// <param name="Skills">Your skills from the profile.</param>
+    /// <param name="Location">Your own location from the profile, so a job restricted to your region is not dropped.</param>
+    public record FilterContext(IReadOnlyList<string> Skills, string Location);
+
+    // Common skills that appear in almost every tech posting. They never count towards "does this job fit my skills".
+    private static readonly HashSet<string> GenericSkills = new(StringComparer.OrdinalIgnoreCase)
+        { "HTML", "CSS", "SCSS", "Git", "Agile", "Scrum", "OOP", "SOLID", "Design Patterns", "REST APIs", "Unit Testing", "TDD", "CI/CD", "JWT", "OAuth" };
+
+    public static bool IsGenericSkill(string skill) => GenericSkills.Contains(skill);
+
+    /// <summary>The last check, after scoring: a reason when the fit score is outside your range, else null.</summary>
+    public static string? FitRangeReason(int score, Rule rule) =>
+        score >= rule.MinFitScore && score <= rule.MaxFitScore ? null
+        : $"Fit score is outside your range ({score} not in {rule.MinFitScore}-{rule.MaxFitScore})";
+
+    /// <summary>Your specific skills that the posting mentions (title and description).</summary>
+    public static List<string> SkillMatches(Job job, IEnumerable<string> skills)
+    {
+        var text = (job.Title + " " + job.Description).ToLowerInvariant();
+        return skills.Where(s => !GenericSkills.Contains(s) && SkillCatalog.Count(text, SkillCatalog.TermFor(s)) > 0).ToList();
+    }
+
+    private static readonly Regex OtherRegion = new(
+        @"\b(usa|u\.s\.a?|us|united states|north america|americas|latam|latin america|canada|europe|emea|uk|united kingdom|germany|france|spain|netherlands|poland|australia|new zealand|brazil|mexico|argentina|california|new york|texas|florida|washington|massachusetts|colorado|illinois|georgia|ontario|london|berlin|toronto)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly string[] OpenHints = { "india", "anywhere", "worldwide", "global", "apac", "asia", "earth" };
+
+    /// <summary>"USA Only", "Americas Only", "California" and similar: a job you cannot take unless you listed that place.</summary>
+    public static string? RegionRestriction(Job job, Rule rule, FilterContext? ctx)
+    {
+        var jl = job.Location.Trim().ToLowerInvariant();
+        if (jl.Length == 0) return null;
+        var restricted = OtherRegion.IsMatch(jl) || Regex.IsMatch(jl, @"\bonly\b");
+        if (!restricted) return null;
+
+        var mine = rule.LocationPrefs.Select(p => p.Place).Concat(new[] { ctx?.Location ?? "" })
+            .Select(l => l.Trim().ToLowerInvariant()).Where(l => l.Length > 0 && l != "remote").ToList();
+        if (OpenHints.Any(jl.Contains) || mine.Any(jl.Contains) || mine.Any(m => m.Length > 2 && jl.Split(',', '/', '-').Any(p => p.Trim() == m))) return null;
+        return $"Location restricted to \"{job.Location}\"";
+    }
+
+    public static string? Check(Job job, Rule rule, FilterContext? ctx = null)
     {
         var company = job.Company.ToLowerInvariant();
         foreach (var bad in rule.BlacklistedCompanies.Where(b => !string.IsNullOrWhiteSpace(b)))
@@ -28,10 +68,17 @@ public static class RuleFilter
 
         if (HasLimitedData(job)) return null;
 
-        if (rule.WorkMode is { } wanted && job.WorkMode != wanted)
-            return $"Work mode is {job.WorkMode}, you want {wanted}";
+        if (LocationModeReason(job, rule) is { } place) return place;
+        if (RegionRestriction(job, rule, ctx) is { } region) return region;
 
-        if (!LocationOk(job, rule.Locations)) return "Location not in your list";
+        // Does the posting actually mention the skills you have? Needs your profile to have specific skills.
+        if (ctx is { Skills.Count: > 0 } && rule.MinSkillMatches > 0)
+        {
+            var specific = ctx.Skills.Count(s => !GenericSkills.Contains(s));
+            var needed = Math.Min(rule.MinSkillMatches, specific);
+            var found = SkillMatches(job, ctx.Skills).Count;
+            if (needed > 0 && found < needed) return $"Only {found} of your skills match (needs {needed})";
+        }
 
         var required = RequiredYears(job);
         if (required is { } r && rule.MaxExperience > 0 && r > rule.MaxExperience)
@@ -43,16 +90,35 @@ public static class RuleFilter
         return null;
     }
 
-    public static bool LocationOk(Job job, List<string> locations)
+    public static readonly string[] AllModes = { "Remote", "Hybrid", "Onsite" };
+
+    /// <summary>True when you set any location preference. With none, every place and work mode is fine.</summary>
+    public static bool HasLocationPreference(Rule rule) =>
+        rule.LocationPrefs.Any(p => !string.IsNullOrWhiteSpace(p.Place)) || AllModes.Any(m => !rule.OtherModes.Contains(m, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Per-place work modes. A job in a place you listed must be in one of that place's modes (for example Pune: Hybrid or Onsite).
+    /// A job anywhere else, including remote jobs open to anywhere, must be in the "everywhere else" modes (for example Remote).
+    /// </summary>
+    public static string? LocationModeReason(Job job, Rule rule)
     {
-        var locs = locations.Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l.Trim().ToLowerInvariant()).ToList();
-        if (locs.Count == 0) return true;
+        if (!HasLocationPreference(rule)) return null;
         var jl = job.Location.Trim().ToLowerInvariant();
-        if (jl.Length == 0) return true;
-        if (locs.Any(l => l != "remote" && jl.Contains(l))) return true;
-        if (job.WorkMode == WorkMode.Remote && locs.Contains("remote"))
-            return jl == "remote" || GenericRemote.Any(g => jl.Contains(g));
-        return false;
+        if (jl.Length == 0) return null;
+        var mode = job.WorkMode.ToString();
+
+        var hits = rule.LocationPrefs.Where(p => !string.IsNullOrWhiteSpace(p.Place) && jl.Contains(p.Place.Trim().ToLowerInvariant())).ToList();
+        if (hits.Count > 0)
+        {
+            if (hits.Any(p => p.Modes.Contains(mode, StringComparer.OrdinalIgnoreCase))) return null;
+            var first = hits[0];
+            var want = first.Modes.Count == 0 ? "nothing" : string.Join(" or ", first.Modes);
+            return $"In {first.Place.Trim()} you want {want}, this job is {mode}";
+        }
+
+        if (rule.OtherModes.Contains(mode, StringComparer.OrdinalIgnoreCase)) return null;
+        var elsewhere = rule.OtherModes.Count == 0 ? "nothing" : string.Join(" or ", rule.OtherModes);
+        return $"Outside your listed places you want {elsewhere}, this job is {mode} ({job.Location})";
     }
 
     /// <summary>Best token overlap (0 to 1) between the job title and any wanted role.</summary>

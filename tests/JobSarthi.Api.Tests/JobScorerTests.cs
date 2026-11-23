@@ -11,7 +11,7 @@ public class JobScorerTests
     private static Rule R() => new()
     {
         Roles = { "Senior .NET Developer" }, Keywords = { "C#", "Angular", "Azure", "Kafka" },
-        Locations = { "Pune" }, MinExperience = 5, MaxExperience = 12,
+        LocationPrefs = { new LocationPref { Place = "Pune", Modes = { "Remote", "Hybrid", "Onsite" } } }, MinExperience = 5, MaxExperience = 12,
     };
 
     [Fact]

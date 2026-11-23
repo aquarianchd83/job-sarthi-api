@@ -22,7 +22,8 @@ public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobS
     public static readonly SemaphoreSlim Gate = new(1, 1);
     public static bool IsRunning => Gate.CurrentCount == 0;
 
-    public async Task<DailyRun> RunAsync(string trigger, CancellationToken ct)
+    /// <param name="sendSummary">False when the caller sends the summary itself later, after queued applications finish.</param>
+    public async Task<DailyRun> RunAsync(string trigger, CancellationToken ct, bool sendSummary = true)
     {
         if (!await Gate.WaitAsync(0, ct)) throw new InvalidOperationException("A run is already in progress.");
         var run = new DailyRun { Trigger = trigger, StartedAtUtc = DateTime.UtcNow };
@@ -65,13 +66,19 @@ public class DailyRunPipeline(JobSarthiDbContext db, JobFetchService fetch, JobS
         }
 
         // Applications queued by this run are still filling in the background, so their state may change after this message.
+        if (sendSummary) await SendSummaryAsync(run);
+        return run;
+    }
+
+    public async Task<string?> SendSummaryAsync(DailyRun run)
+    {
         try
         {
             var (subject, body) = await summary.BuildAsync(run, CancellationToken.None);
             await alerts.NotifyAsync(subject, body, NotifyKind.Summary, CancellationToken.None);
+            return body;
         }
-        catch (Exception ex) { log.LogWarning(ex, "Could not send the daily summary"); }
-        return run;
+        catch (Exception ex) { log.LogWarning(ex, "Could not send the daily summary"); return null; }
     }
 
     private async Task<int> QueueApplicationsAsync(List<string> notes, CancellationToken ct)
