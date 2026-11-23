@@ -58,14 +58,26 @@ public static class ApplyEngine
 
         // 4. Fill. Values are never written to the log, only which fields were filled.
         var failures = new List<string>();
+        var reask = new List<Question>();
         foreach (var action in plan)
         {
             if (action is SkipAction skip) { log.Add($"Skipped \"{skip.Label}\" ({skip.Reason})"); continue; }
             var err = await FormFieldMapper.ExecuteAsync(frame, action);
             if (err is null) log.Add($"Filled \"{action.Label}\"");
+            else if (err == FormFieldMapper.NoMatch)
+            {
+                // The answer we had is not one of this dropdown's choices: ask again rather than fail.
+                log.Add($"Your answer for \"{ShortLabel(action.Label)}\" is not a choice on this form. Answer it again");
+                var f = fields.FirstOrDefault(x => x.Idx == action.Idx);
+                reask.Add(f is { Type: FieldType.Select, Options.Count: > 0 }
+                    ? new Question("question", f.Label, "select", f.Options.Select(o => o.Label).Distinct().ToList())
+                    : new Question("question", f?.Label ?? action.Label));
+            }
             else { failures.Add(action.Label); log.Add($"Could not fill \"{action.Label}\": {err}"); }
         }
         var filledShot = await screenshot("filled");
+        if (reask.Count > 0 && failures.Count == 0)
+            return new ApplyOutcome(OutcomeKind.NeedsInput, $"{reask.Count} question(s) need a different answer", filledShot, reask, log);
         if (failures.Count > 0)
             return ApplyOutcome.Failed($"Could not fill: {string.Join(", ", failures)}. The site layout may have changed.", filledShot, log);
 

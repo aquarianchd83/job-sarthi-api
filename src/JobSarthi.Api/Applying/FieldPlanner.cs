@@ -36,7 +36,9 @@ public static class FieldPlanner
         if (f.Type == FieldType.Textarea && Has(text, "cover letter", "cover_letter")) return FieldRole.CoverLetter;
         if (Regex.IsMatch(text, @"\b(full name|your name|legal name)\b") || f.Label.Trim().Equals("name", StringComparison.OrdinalIgnoreCase)
             || f.Name.Equals("name", StringComparison.OrdinalIgnoreCase)) return FieldRole.FullName;
-        if (Regex.IsMatch(text, @"\b(current )?(location|city)\b") && !text.Contains("relocat")) return FieldRole.Location;
+        // "Location (City)" is the profile location; a long question that mentions a location ("authorized to work in the location(s) ...") is not.
+        if (Regex.IsMatch(text, @"\b(current )?(location|city)\b") && !text.Contains("relocat")
+            && f.Label.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 5) return FieldRole.Location;
         return FieldRole.Other;
     }
 

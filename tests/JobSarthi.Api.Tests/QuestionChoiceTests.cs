@@ -74,3 +74,16 @@ public class QuestionChoiceTests
     public void Multi_answers_split_on_semicolons() =>
         Assert.Equal(new[] { "India", "US" }, Question.SplitMulti(" India ;US; "));
 }
+
+public class LocationRoleTests
+{
+    private static FormField T(string label) => new(0, FieldType.Text, label, "", "", "", true, "text", new());
+
+    [Fact]
+    public void Short_location_label_is_the_profile_location() =>
+        Assert.Equal(FieldRole.Location, FieldPlanner.Classify(T("Location (City)")));
+
+    [Fact]
+    public void A_question_that_mentions_a_location_is_not() =>
+        Assert.Equal(FieldRole.Other, FieldPlanner.Classify(T("Are you authorized to work in the location(s) you selected in your previous response?")));
+}

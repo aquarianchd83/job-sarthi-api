@@ -64,10 +64,11 @@ public class ApplyOrchestrator(JobSarthiDbContext db, IEnumerable<IJobApplier> a
 
         var profile = await db.Profiles.AsNoTracking().FirstAsync(ct);
         var resumePath = await db.Resumes.AsNoTracking().OrderByDescending(r => r.UploadedAtUtc).Select(r => r.StoragePath).FirstOrDefaultAsync(ct);
-        var answers = (await db.SavedAnswers.AsNoTracking().ToListAsync(ct)).Select(a => (a.Question, a.Answer)).ToList();
-        // Answers you typed for this application count too, even if you did not save them for next time.
-        answers.AddRange((await db.PendingQuestions.Where(q => q.ApplicationId == app.Id && q.Resolved && q.Answer != null).ToListAsync(ct))
-            .Select(q => (q.Prompt, q.Answer!)));
+        // Answers you typed for this application come first (newest first), so they win over an older saved answer.
+        var answers = (await db.PendingQuestions.Where(q => q.ApplicationId == app.Id && q.Resolved && q.Answer != null)
+                .OrderByDescending(q => q.Id).ToListAsync(ct))
+            .Select(q => (q.Prompt, q.Answer!)).ToList();
+        answers.AddRange((await db.SavedAnswers.AsNoTracking().ToListAsync(ct)).Select(a => (a.Question, a.Answer)));
 
         var ctx = new ApplyContext(app.Id, job, new PlanInput(profile, resumePath, app.CoverLetter ?? "", answers), submitRequested);
 

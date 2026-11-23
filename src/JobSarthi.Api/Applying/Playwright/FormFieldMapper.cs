@@ -17,9 +17,14 @@ public static class FormFieldMapper
         const al = el.getAttribute('aria-label'); if (al) return al;
         const lb = el.getAttribute('aria-labelledby');
         if (lb) { const n = document.getElementById(lb.split(' ')[0]); if (n) return n.innerText; }
-        const wrap = el.closest('.field, .application-field, .application-question, [class*=question], fieldset, li, .form-group, div');
-        const l = wrap && wrap.querySelector('label, legend');
-        return l ? l.innerText : (el.placeholder || el.name || '');
+        // Nearest wrapper (up to 5 levels) that has a label of its own.
+        let box = el.parentElement;
+        for (let up = 0; box && box !== document.body && up < 5; up++, box = box.parentElement) {
+          const l = box.querySelector('label, legend, [class*=label]');
+          if (l && !l.querySelector('input, select, textarea') && clean(l.innerText)) return l.innerText;
+          if (box.querySelectorAll('input:not([aria-hidden=true]):not(.requiredInput), select, textarea').length > 1) break;   // would borrow another question's label
+        }
+        return el.placeholder || el.name || '';
       };
       const groupLabel = el => {
         const fs = el.closest('fieldset'); const lg = fs && fs.querySelector('legend'); if (lg) return lg.innerText;
@@ -49,11 +54,14 @@ public static class FormFieldMapper
         const type = (el.getAttribute('type') || 'text').toLowerCase();
         if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type) || el.disabled) continue;
         if (type !== 'file' && !visible(el)) continue;
+        // Helper inputs that custom dropdowns (react-select) put next to the real control: invisible, unlabelled, "required".
+        if (!['file', 'checkbox', 'radio'].includes(type) && (el.getAttribute('aria-hidden') === 'true' || el.classList.contains('requiredInput')
+            || (el.tabIndex === -1 && getComputedStyle(el).opacity === '0'))) continue;
         const idx = n++; el.setAttribute('data-js-idx', idx);
         const rawLabel = type === 'radio' ? groupLabel(el) : labelOf(el);
         const required = el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test((rawLabel || '').trim());
         const base = { idx, label: clean(rawLabel), name: el.name || '', id: el.id || '', autocomplete: el.getAttribute('autocomplete') || '',
-                       required, inputType: type, options: [] };
+                       required, inputType: el.getAttribute('role') === 'combobox' && el.tagName !== 'SELECT' ? 'combobox' : type, options: [] };
         if (type === 'radio') {
           const key = el.name || ('r' + idx);
           if (!groups[key]) { groups[key] = { ...base, type: 'Radio' }; out.push(groups[key]); }
@@ -111,7 +119,61 @@ public static class FormFieldMapper
     public static async Task<List<FormField>> CollectAsync(IFrame frame)
     {
         var json = await frame.EvaluateAsync<JsonElement>(CollectScript);
-        return Parse(json);
+        var fields = Parse(json);
+        // Custom dropdowns ("Select...", role=combobox) only show their options when opened: open each, read, close.
+        for (var i = 0; i < fields.Count; i++)
+        {
+            if (fields[i].InputType != "combobox") continue;
+            var options = await ReadComboOptionsAsync(frame, fields[i].Idx);
+            if (options.Count > 0)
+                fields[i] = fields[i] with { Type = FieldType.Select, Options = options.Select(o => new FieldOption(fields[i].Idx, o)).ToList() };
+        }
+        return fields;
+    }
+
+    private const string VisibleOptionsScript = """
+    () => [...document.querySelectorAll('[role=option]')]
+      .filter(o => { const r = o.getBoundingClientRect(); return r.width > 0 || r.height > 0; })
+      .map(o => (o.innerText || '').replace(/\s+/g, ' ').trim()).filter(t => t && !/^no (options|results)/i.test(t))
+    """;
+
+    /// <summary>The options a custom dropdown lists when opened. Empty for type-ahead boxes that only search as you type (e.g. School).</summary>
+    public static async Task<List<string>> ReadComboOptionsAsync(IFrame frame, int idx)
+    {
+        var el = frame.Locator($"[data-js-idx='{idx}']");
+        try
+        {
+            await el.ClickAsync(new() { Timeout = 4000 });
+            List<string> options = new();
+            for (var attempt = 0; attempt < 4 && options.Count == 0; attempt++)
+            {
+                await Task.Delay(250);
+                options = (await frame.EvaluateAsync<string[]>(VisibleOptionsScript)).Distinct().Take(400).ToList();
+            }
+            await el.PressAsync("Escape", new() { Timeout = 2000 });
+            return options;
+        }
+        catch (PlaywrightException) { return new(); }
+    }
+
+    /// <summary>Picks an option in a custom dropdown: open it, type to filter, click the option whose text matches.</summary>
+    private static async Task<bool> PickComboOptionAsync(IFrame frame, ILocator el, string option, bool exact)
+    {
+        await el.ClickAsync(new() { Timeout = 4000 });
+        await el.FillAsync(option, new() { Timeout = 4000 });
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            await Task.Delay(300);   // type-ahead lists load from the server
+            var opts = frame.Locator("[role=option]");
+            var count = await opts.CountAsync();
+            var texts = new List<string>();
+            for (var i = 0; i < count; i++) texts.Add(((await opts.Nth(i).InnerTextAsync()) ?? "").Trim());
+            var hit = texts.FindIndex(t => t.Equals(option, StringComparison.OrdinalIgnoreCase));
+            if (hit < 0 && !exact) hit = texts.FindIndex(t => t.Contains(option, StringComparison.OrdinalIgnoreCase));
+            if (hit >= 0) { await opts.Nth(hit).ClickAsync(new() { Timeout = 4000 }); return true; }
+        }
+        await el.PressAsync("Escape");
+        return false;
     }
 
     /// <summary>Turns the collect script's JSON into fields. Shared with the MCP draft flow.</summary>
@@ -131,6 +193,12 @@ public static class FormFieldMapper
         return list;
     }
 
+    /// <summary>Returned when a dropdown has no choice matching the answer: the run asks you again instead of failing.</summary>
+    public const string NoMatch = "No matching choice on the form";
+
+    private static async Task<bool> IsComboAsync(ILocator el) =>
+        await el.EvaluateAsync<bool>("e => e.tagName !== 'SELECT' && e.getAttribute('role') === 'combobox'");
+
     /// <summary>Performs one planned action. Returns an error message, or null when it worked.</summary>
     public static async Task<string?> ExecuteAsync(IFrame frame, PlannedAction action)
     {
@@ -139,7 +207,14 @@ public static class FormFieldMapper
         {
             switch (action)
             {
+                case FillAction a when await IsComboAsync(el):
+                    // A type-ahead box (School, City): type, then take the matching suggestion if one shows up.
+                    if (!await PickComboOptionAsync(frame, el, a.Value, exact: false)) return NoMatch;
+                    break;
                 case FillAction a: await el.FillAsync(a.Value, new() { Timeout = 8000 }); break;
+                case SelectAction a when await IsComboAsync(el):
+                    if (!await PickComboOptionAsync(frame, el, a.Option, exact: true)) return NoMatch;
+                    break;
                 case SelectAction a: await el.SelectOptionAsync(new SelectOptionValue { Label = a.Option }, new() { Timeout = 8000 }); break;
                 case UploadAction a: await el.SetInputFilesAsync(a.Path, new() { Timeout = 15000 }); break;
                 case ClickAction a:

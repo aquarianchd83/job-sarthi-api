@@ -219,4 +219,91 @@ public class ApplyEngineBrowserTests : IAsyncLifetime
         Assert.True(await page.IsCheckedAsync("#c2"));
         Assert.True(await page.IsCheckedAsync("#c3"));
     }
+
+    // Greenhouse's new job board (used by Stripe): react-select style dropdowns. Options exist only while the menu is open,
+    // and each dropdown carries an invisible "required" helper input with no label.
+    private const string ComboForm = """
+    <style>.menu{border:1px solid #ccc}.requiredInput{opacity:0;position:absolute;left:0;bottom:0;width:100%;height:4px}.sel{position:relative;width:300px}</style>
+    <form id="application_form" onsubmit="event.preventDefault()">
+      <div><label for="first_name">First Name *</label><input id="first_name" aria-required="true"></div>
+      <div class="sel" data-opts="Yes|No"><label id="q1-label" for="q1">Are you authorized to work in the location(s) you selected? *</label>
+        <div class="val"></div><input id="q1" role="combobox" aria-labelledby="q1-label" aria-required="true" autocomplete="off">
+        <input class="requiredInput" tabindex="-1" aria-hidden="true" required value=""></div>
+      <div class="sel" data-opts="Bachelor's Degree|Master's Degree|Doctorate" ><label for="degree">Degree *</label>
+        <div class="val"></div><input id="degree" role="combobox" aria-required="true" autocomplete="off">
+        <input class="requiredInput" tabindex="-1" aria-hidden="true" required value=""></div>
+      <div class="sel" data-search="Indian Institute of Technology Delhi|Delhi University|Panjab University"><label for="school">School *</label>
+        <div class="val"></div><input id="school" role="combobox" aria-required="true" autocomplete="off">
+        <input class="requiredInput" tabindex="-1" aria-hidden="true" required value=""></div>
+      <input type="file" name="resume">
+      <button type="submit">Submit application</button>
+    </form>
+    <script>
+      document.querySelectorAll('.sel').forEach(sel => {
+        const input = sel.querySelector('[role=combobox]'), hidden = sel.querySelector('.requiredInput');
+        const all = (sel.dataset.opts || sel.dataset.search).split('|'), search = !!sel.dataset.search;
+        let menu = null;
+        const close = () => { if (menu) { menu.remove(); menu = null; } };
+        const open = () => {
+          close();
+          const q = input.value.toLowerCase();
+          if (search && !q) return;
+          menu = document.createElement('div'); menu.className = 'menu'; menu.setAttribute('role', 'listbox');
+          all.filter(o => o.toLowerCase().includes(q)).forEach(o => {
+            const d = document.createElement('div'); d.setAttribute('role', 'option'); d.textContent = o;
+            d.addEventListener('mousedown', e => { e.preventDefault(); sel.querySelector('.val').textContent = o; hidden.value = o; input.value = ''; close(); });
+            menu.appendChild(d);
+          });
+          sel.appendChild(menu);
+        };
+        input.addEventListener('click', open);
+        input.addEventListener('input', () => search ? setTimeout(open, 200) : open());
+        input.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
+      });
+    </script>
+    """;
+
+    [Fact]
+    public async Task Custom_dropdowns_are_read_with_their_options_and_helper_inputs_are_ignored()
+    {
+        if (_browser is null) return;
+        var page = await _browser.NewPageAsync();
+        await page.SetContentAsync(ComboForm);
+        var fields = await FormFieldMapper.CollectAsync(page.MainFrame);
+        Assert.DoesNotContain(fields, f => f.Label.Length == 0 || f.Label.StartsWith("Unlabelled"));
+        var auth = Assert.Single(fields, f => f.Label.StartsWith("Are you authorized"));
+        Assert.Equal(FieldType.Select, auth.Type);
+        Assert.Equal(new[] { "Yes", "No" }, auth.Options.Select(o => o.Label));
+        Assert.Equal(3, Assert.Single(fields, f => f.Label == "Degree").Options.Count);
+        var school = Assert.Single(fields, f => f.Label == "School");
+        Assert.Equal(FieldType.Text, school.Type);   // type-ahead: no options until you type
+        Assert.Equal(0, await page.Locator("[role=listbox]").CountAsync()); // menus closed again
+    }
+
+    [Fact]
+    public async Task Custom_dropdowns_get_the_chosen_option()
+    {
+        if (_browser is null) return;
+        var page = await _browser.NewPageAsync();
+        await page.SetContentAsync(ComboForm);
+        var o = await ApplyEngine.RunAsync(page, page.MainFrame,
+            Ctx(false, ("authorized to work in the location", "Yes"), ("Degree", "Master's Degree"), ("School", "Panjab University")),
+            ApplyEngine.DefaultSubmit, s => Task.FromResult<string?>(null));
+        Assert.True(o.Kind == OutcomeKind.Filled, string.Join(" | ", o.Log));
+        var vals = await page.Locator(".val").AllInnerTextsAsync();
+        Assert.Equal(new[] { "Yes", "Master's Degree", "Panjab University" }, vals);
+    }
+
+    [Fact]
+    public async Task A_dropdown_answer_that_is_not_a_choice_is_asked_again()
+    {
+        if (_browser is null) return;
+        var page = await _browser.NewPageAsync();
+        await page.SetContentAsync(ComboForm);
+        var o = await ApplyEngine.RunAsync(page, page.MainFrame,
+            Ctx(false, ("authorized to work in the location", "Yes"), ("Degree", "Master's Degree"), ("School", "Hogwarts")),
+            ApplyEngine.DefaultSubmit, s => Task.FromResult<string?>(null));
+        Assert.Equal(OutcomeKind.NeedsInput, o.Kind);
+        Assert.Equal("School", Assert.Single(o.Questions).Prompt);
+    }
 }
