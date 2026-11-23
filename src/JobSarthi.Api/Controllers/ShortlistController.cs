@@ -5,7 +5,8 @@ using JobSarthi.Api.Data;
 namespace JobSarthi.Api.Controllers;
 
 public record ShortlistJobDto(int Id, string SourceKey, string Title, string Company, string Location,
-    string WorkMode, string Url, bool CanAutoApply, int FitScore, string? ScoreNotes, DateTime FetchedAtUtc);
+    string WorkMode, string Url, bool CanAutoApply, int FitScore, string? ScoreNotes, DateTime FetchedAtUtc,
+    string? ApplyCategory, string? AtsKey, string? ApplyUrl, string? ApplyEmail, string? CategoryReason);
 public record RejectReasonCount(string Reason, int Count);
 
 [ApiController]
@@ -14,13 +15,17 @@ public class ShortlistController(JobSarthiDbContext db) : ControllerBase
 {
     /// <summary>Jobs that passed your rules, best fit first.</summary>
     [HttpGet]
-    public async Task<IEnumerable<ShortlistJobDto>> List([FromQuery] int take = 100, [FromQuery] int minScore = 0, [FromQuery] int maxScore = 100) =>
+    /// <param name="category">Api, Email or Manual. Closed jobs are never on the shortlist.</param>
+    public async Task<IEnumerable<ShortlistJobDto>> List([FromQuery] int take = 100, [FromQuery] int minScore = 0, [FromQuery] int maxScore = 100,
+        [FromQuery] JobSarthi.Api.Domain.Enums.ApplyCategory? category = null) =>
         await db.Jobs.AsNoTracking()
-            .Where(j => j.Shortlisted && j.FitScore >= minScore && j.FitScore <= maxScore)
+            .Where(j => j.Shortlisted && !j.IsClosed && j.FitScore >= minScore && j.FitScore <= maxScore)
+            .Where(j => category == null || j.ApplyCategory == category)
             .OrderByDescending(j => j.FitScore).ThenByDescending(j => j.FetchedAtUtc)
             .Take(Math.Clamp(take, 1, 500))
             .Select(j => new ShortlistJobDto(j.Id, j.SourceKey, j.Title, j.Company, j.Location, j.WorkMode.ToString(),
-                j.Url, j.CanAutoApply, j.FitScore ?? 0, j.ScoreNotes, j.FetchedAtUtc))
+                j.Url, j.CanAutoApply, j.FitScore ?? 0, j.ScoreNotes, j.FetchedAtUtc,
+                j.ApplyCategory == null ? null : j.ApplyCategory.ToString(), j.AtsKey, j.ApplyUrl, j.ApplyEmail, j.CategoryReason))
             .ToListAsync();
 
     /// <summary>Why jobs were dropped. Useful when tuning rules.</summary>

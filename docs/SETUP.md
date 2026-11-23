@@ -92,6 +92,8 @@ with the server and restarts after a crash. The built-in timer then starts the d
 | Red strip "Job source problem" | A company slug is wrong, or the site changed or is down |
 | "Application form not found" | The job closed or the form layout changed. Apply by hand with Open job link |
 | "Needs you" with a CAPTCHA or code | The app never solves these. Open the job link and apply yourself |
+| Job shows "No longer accepting applications" | The listing or apply page said it is closed. It is ignored on purpose |
+| "Browser pre-fill did not work" on a draft | Playwright MCP is off or Node.js is missing. The link and cover letter are still ready |
 | "Run missed" alert | The server was off more than 6 hours past the run time. Use **Run now** |
 
 ## 6. Tests

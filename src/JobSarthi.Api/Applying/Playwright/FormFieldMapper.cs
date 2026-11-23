@@ -7,7 +7,7 @@ namespace JobSarthi.Api.Applying.Playwright;
 public static class FormFieldMapper
 {
     // Stamps every usable control with data-js-idx so it can be found again, and reads label, requiredness and options.
-    private const string CollectScript = """
+    public const string CollectScript = """
     () => {
       const clean = t => (t || '').replace(/\s+/g, ' ').replace(/\s*\*+\s*$/, '').replace(/\(required\)/i, '').trim();
       const visible = el => { const s = getComputedStyle(el), r = el.getBoundingClientRect();
@@ -58,6 +58,12 @@ public static class FormFieldMapper
     public static async Task<List<FormField>> CollectAsync(IFrame frame)
     {
         var json = await frame.EvaluateAsync<JsonElement>(CollectScript);
+        return Parse(json);
+    }
+
+    /// <summary>Turns the collect script's JSON into fields. Shared with the MCP draft flow.</summary>
+    public static List<FormField> Parse(JsonElement json)
+    {
         var list = new List<FormField>();
         foreach (var e in json.EnumerateArray())
         {

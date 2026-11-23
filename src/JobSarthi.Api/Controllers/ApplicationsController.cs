@@ -9,12 +9,13 @@ using JobSarthi.Api.Tailoring;
 namespace JobSarthi.Api.Controllers;
 
 public record ApplicationListItem(int Id, int JobId, string Title, string Company, string SourceKey, string Status,
-    DateTime UpdatedAtUtc, string Url);
+    DateTime UpdatedAtUtc, string Url, string? ApplyCategory);
 public record LogLine(DateTime AtUtc, string Message);
 public record PendingQuestionDto(int Id, string Kind, string Prompt);
 public record ApplicationDetail(int Id, int JobId, string Title, string Company, string SourceKey, string Status, string Url,
     DateTime UpdatedAtUtc, DateTime? SubmittedAtUtc, string? CoverLetter, bool HasScreenshot,
-    List<LogLine> Log, List<PendingQuestionDto> Pending);
+    List<LogLine> Log, List<PendingQuestionDto> Pending,
+    string? ApplyCategory, string? ApplyUrl, string? ApplyEmail, string? EmailSubject);
 public record AnswerRequest(int QuestionId, string Answer, bool Save);
 
 [ApiController]
@@ -27,7 +28,8 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
                join j in db.Jobs.AsNoTracking() on a.JobId equals j.Id
                where a.Status != ApplicationStatus.Shortlisted || a.TailoredAtUtc == null
                orderby a.UpdatedAtUtc descending
-               select new ApplicationListItem(a.Id, a.JobId, j.Title, j.Company, j.SourceKey, a.Status.ToString(), a.UpdatedAtUtc, j.Url))
+               select new ApplicationListItem(a.Id, a.JobId, j.Title, j.Company, j.SourceKey, a.Status.ToString(), a.UpdatedAtUtc, j.ApplyUrl ?? j.Url,
+                   j.ApplyCategory == null ? null : j.ApplyCategory.ToString()))
             .ToListAsync();
 
     [HttpGet("{id:int}")]
@@ -40,7 +42,8 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
     {
         var job = await db.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId, ct);
         if (job is null) return NotFound("Job not found.");
-        if (!job.CanAutoApply) return BadRequest("This source cannot be applied to automatically. Use Open link and apply yourself.");
+        if (job.IsClosed) return Conflict("This job no longer accepts applications. It is ignored.");
+        if (!job.CanAutoApply) return BadRequest("This job cannot be applied to automatically. Use Prepare draft (email or manual apply).");
         if (!await db.Resumes.AnyAsync(ct)) return BadRequest("Upload your resume first (Resume & Profile).");
 
         var existing = await db.Applications.AsNoTracking().FirstOrDefaultAsync(a => a.JobId == jobId, ct);
@@ -56,6 +59,31 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
             app = made;
         }
         return await Start(app, ct);
+    }
+
+    /// <summary>
+    /// Email and Manual apply: tailor a cover letter and get everything ready, never submit.
+    /// Email: subject and body ready for your mail app. Manual: with Playwright MCP on, the apply page opens pre-filled in your browser.
+    /// </summary>
+    [HttpPost("draft/{jobId:int}")]
+    public async Task<ActionResult<ApplicationDetail>> Draft(int jobId, CancellationToken ct)
+    {
+        var job = await db.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == jobId, ct);
+        if (job is null) return NotFound("Job not found.");
+        if (job.IsClosed) return Conflict("This job no longer accepts applications. It is ignored.");
+
+        var existing = await db.Applications.FirstOrDefaultAsync(a => a.JobId == jobId, ct);
+        if (existing?.Status == ApplicationStatus.Submitted) return Conflict("You already applied to this job.");
+        if (existing is not null && queue.IsActive(existing.Id)) return Conflict("This application is already running.");
+        var app = existing is { TailoredAtUtc: not null } ? existing : null;
+        if (app is null)
+        {
+            var (made, error) = await tailoring.RunAsync(jobId, ct);
+            if (made is null) return BadRequest(error);
+            app = made;
+        }
+        // Never submits: the orchestrator only drafts for Email/Manual, and only fills for an ATS.
+        return await Start(app, ct, submit: false, note: "Preparing a draft (will not submit)");
     }
 
     [HttpPost("{id:int}/approve")]
@@ -166,7 +194,12 @@ public class ApplicationsController(JobSarthiDbContext db, ApplyQueue queue, App
             .Select(l => new LogLine(l.AtUtc, l.Message)).ToListAsync();
         var pending = await db.PendingQuestions.AsNoTracking().Where(q => q.ApplicationId == id && !q.Resolved)
             .Select(q => new PendingQuestionDto(q.Id, q.Kind, q.Prompt)).ToListAsync();
+        var name = await db.Profiles.AsNoTracking().Select(p => p.FullName).FirstOrDefaultAsync();
+        var subject = row.j.ApplyCategory == ApplyCategory.Email
+            ? $"Application for {row.j.Title}" + (string.IsNullOrWhiteSpace(name) ? "" : $" - {name}")
+            : null;
         return new ApplicationDetail(row.a.Id, row.a.JobId, row.j.Title, row.j.Company, row.j.SourceKey, row.a.Status.ToString(), row.j.Url,
-            row.a.UpdatedAtUtc, row.a.SubmittedAtUtc, row.a.CoverLetter, row.a.ScreenshotFile is not null, log, pending);
+            row.a.UpdatedAtUtc, row.a.SubmittedAtUtc, row.a.CoverLetter, row.a.ScreenshotFile is not null, log, pending,
+            row.j.ApplyCategory?.ToString(), row.j.ApplyUrl ?? row.j.Url, row.j.ApplyEmail, subject);
     }
 }

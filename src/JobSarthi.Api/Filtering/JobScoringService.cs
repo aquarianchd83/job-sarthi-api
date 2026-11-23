@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using JobSarthi.Api.Classification;
 using JobSarthi.Api.Data;
 using JobSarthi.Api.Domain.Entities;
 
@@ -23,6 +24,8 @@ public class JobScoringService(JobSarthiDbContext db)
         var jobs = await db.Jobs.ToListAsync(ct);
         foreach (var job in jobs)
         {
+            // New jobs are sorted into API / Email / Manual apply, and closed postings are marked, before the rules run.
+            if (job.ClassifiedAtUtc is null) JobClassificationService.ClassifyListing(job, now);
             var reason = RuleFilter.Check(job, rule, ctx);
             job.ScoredAtUtc = now;
             if (reason is null)
