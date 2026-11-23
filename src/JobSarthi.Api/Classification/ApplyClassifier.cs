@@ -65,17 +65,43 @@ public static class ApplyClassifier
         return new(ApplyCategory.Manual, null, url, null, "No ATS or apply-by-email found. Apply on the site");
     }
 
-    /// <summary>The first Greenhouse/Lever/Ashby/Workable link in a description or page HTML.</summary>
+    private static readonly Regex IframeSrc = new(@"<iframe\b[^>]*\bsrc\s*=\s*[""']([^""']+)[""']", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// The ATS link that IS this job's application, in a description or page HTML. Safe against "related jobs" lists:
+    /// an embedded application iframe wins; otherwise there must be exactly one distinct ATS posting link. Several → null (stays Manual).
+    /// </summary>
     public static (string Ats, string Url)? FindAtsLink(string? text)
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
-        foreach (Match m in UrlInText.Matches(text))
-        {
-            var link = System.Net.WebUtility.HtmlDecode(m.Value).TrimEnd('.', ',', ';');
-            if (AtsFor(link) is { } ats) return (ats, link);
-        }
-        return null;
+
+        var frames = IframeSrc.Matches(text).Select(m => Decode(m.Groups[1].Value))
+            .Where(u => AtsFor(u) is not null).Select(Key).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (frames.Count == 1) return (AtsFor(frames[0])!, frames[0]);
+        if (frames.Count > 1) return null;
+
+        var links = UrlInText.Matches(text).Select(m => Decode(m.Value).TrimEnd('.', ',', ';'))
+            .Where(u => AtsFor(u) is not null && !IsBoardHome(u)).Select(Key).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return links.Count == 1 ? (AtsFor(links[0])!, links[0]) : null;
     }
+
+    private static string Decode(string s) => System.Net.WebUtility.HtmlDecode(s);
+
+    /// <summary>One posting = one key: drops tracking query, fragment and the /apply or /application suffix. Keeps gh_jid / token queries.</summary>
+    private static string Key(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return url;
+        var path = u.AbsolutePath.TrimEnd('/');
+        foreach (var suffix in new[] { "/apply", "/application" })
+            if (path.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) path = path[..^suffix.Length];
+        var keep = u.Query.Contains("gh_jid=", StringComparison.OrdinalIgnoreCase) || u.Query.Contains("token=", StringComparison.OrdinalIgnoreCase) || u.Query.Contains("for=", StringComparison.OrdinalIgnoreCase);
+        return $"{u.Scheme}://{u.Host}{path}{(keep ? u.Query : "")}";
+    }
+
+    /// <summary>A company's board home page (boards.greenhouse.io/acme) is not a posting.</summary>
+    private static bool IsBoardHome(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var u) && u.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries).Length <= 1
+        && !u.Query.Contains("gh_jid=", StringComparison.OrdinalIgnoreCase) && !u.Query.Contains("token=", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>An address the posting tells you to send your resume to. A contact address alone is not enough.</summary>
     public static string? FindApplyEmail(string text)

@@ -116,3 +116,32 @@ public class JobClassificationTests
         Assert.Null(job.ApplyCategory);
     }
 }
+
+public class AtsLinkSafetyTests
+{
+    [Fact]
+    public void Related_jobs_with_several_ats_links_stay_manual() =>
+        Assert.Null(ApplyClassifier.FindAtsLink(
+            "<a href='https://boards.greenhouse.io/acme/jobs/1'>Data Engineer</a> <a href='https://boards.greenhouse.io/acme/jobs/2'>Designer</a>"));
+
+    [Fact]
+    public void One_posting_linked_twice_counts_once()
+    {
+        var r = ApplyClassifier.FindAtsLink("<a href='https://jobs.lever.co/acme/abc'>Job</a> <a href='https://jobs.lever.co/acme/abc/apply?utm_source=x'>Apply</a>");
+        Assert.Equal("lever", r?.Ats);
+    }
+
+    [Fact]
+    public void Embedded_application_iframe_wins_over_related_links()
+    {
+        var html = "<iframe src=\"https://boards.greenhouse.io/embed/job_app?for=acme&amp;token=123\"></iframe>" +
+                   "<a href='https://boards.greenhouse.io/acme/jobs/7'>Other</a><a href='https://boards.greenhouse.io/acme/jobs/8'>Other</a>";
+        var r = ApplyClassifier.FindAtsLink(html);
+        Assert.Equal("greenhouse", r?.Ats);
+        Assert.Contains("token=123", r?.Url);
+    }
+
+    [Fact]
+    public void Board_home_link_is_not_a_posting() =>
+        Assert.Null(ApplyClassifier.FindAtsLink("See all openings at https://boards.greenhouse.io/acme"));
+}
